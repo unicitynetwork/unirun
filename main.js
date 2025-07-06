@@ -154,6 +154,26 @@ async function initializePlayerToken() {
     const savedTokenString = localStorage.getItem('unicityRunner_playerToken');
     const savedPrivateKey = localStorage.getItem('unicityRunner_privateKey');
     
+    // Check if saved token has invalid position and clear it
+    if (savedTokenString) {
+        try {
+            const tokenData = JSON.parse(savedTokenString);
+            if (tokenData.state && tokenData.state.data) {
+                const stateBytes = window.UnicitySDK.HexConverter.decode(tokenData.state.data);
+                const stateData = JSON.parse(new TextDecoder().decode(stateBytes));
+                if (stateData.position && stateData.position[1] < -100) {
+                    console.log('Clearing saved token with invalid position');
+                    localStorage.removeItem('unicityRunner_playerToken');
+                    localStorage.removeItem('unicityRunner_privateKey');
+                    await createNewPlayerToken();
+                    return;
+                }
+            }
+        } catch (e) {
+            console.error('Error checking saved token:', e);
+        }
+    }
+    
     if (savedTokenString && savedPrivateKey) {
         // Load existing token
         const tokenData = JSON.parse(savedTokenString);
@@ -291,78 +311,133 @@ function getPlayerState() {
 
 // Set up noa engine
 function setupNoaEngine() {
+    // Create engine options
     const opts = {
         domElement: document.getElementById('app'),
-        debug: false,
+        debug: true,
         showFPS: true,
-        inverseY: false,
-        inverseX: false,
-        sensitivity: 0.01,
-        gravity: [0, -10, 0],
-        bindings: {
-            forward: ['W', '<up>'],
-            backward: ['S', '<down>'],
-            left: ['A', '<left>'],
-            right: ['D', '<right>'],
-            jump: ['<space>'],
-        }
+        chunkSize: 32,
+        chunkAddDistance: 2.5,
+        chunkRemoveDistance: 3.5,
     };
     
     // Create engine
     noa = new Engine(opts);
     
-    // Configure 3rd person camera
-    noa.camera.zoomDistance = 5;
-    noa.camera.pitch = -0.5;
-    
-    // Register materials
-    const wallTexture = 'https://cdn3.struffelproductions.com/file/ambientcg/media/images/Rock030_1K_Color.jpg';
-    const floorTexture = 'https://cdn3.struffelproductions.com/file/ambientcg/media/images/Ground037_1K_Color.jpg';
-    
-    noa.registry.registerMaterial('wall', { texture: wallTexture });
-    noa.registry.registerMaterial('floor', { texture: floorTexture });
+    // Register materials - using simple colors
+    var brownish = [0.45, 0.36, 0.22];
+    var grayish = [0.6, 0.6, 0.6];
+    noa.registry.registerMaterial('dirt', { color: brownish });
+    noa.registry.registerMaterial('stone', { color: grayish });
     
     // Register blocks
-    const wallID = noa.registry.registerBlock(1, { material: 'wall' });
-    const floorID = noa.registry.registerBlock(2, { material: 'floor' });
+    var dirtID = noa.registry.registerBlock(1, { material: 'dirt' });
+    var stoneID = noa.registry.registerBlock(2, { material: 'stone' });
+    
+    console.log('Registered blocks - dirtID:', dirtID, 'stoneID:', stoneID);
     
     // Set player position from token
     const playerState = getPlayerState();
-    const position = playerState?.position || [0, 1, 0];
+    let position = playerState?.position || [8, 5, 8]; // Start at y=5, well above ground
+    
+    // Sanity check - if player is way below the world, reset them
+    if (position[1] < -10) {
+        console.log('Player position was invalid, resetting to spawn point');
+        position = [8, 5, 8];
+    }
+    
+    console.log('Setting player position to:', position);
     noa.entities.setPosition(noa.playerEntity, position);
     
+    // Make sure player has a mesh
+    const playerMesh = noa.entities.getPositionData(noa.playerEntity);
+    console.log('Player entity:', noa.playerEntity, 'mesh data:', playerMesh);
+    
+    // Log camera info
+    console.log('Camera settings:', {
+        zoom: noa.camera.zoomDistance,
+        pitch: noa.camera.pitch,
+        position: noa.camera.getPosition()
+    });
+    
+    // Create flat terrain with maze walls
+    function getVoxelID(x, y, z) {
+        // Underground is all dirt
+        if (y < 0) return dirtID;
+        
+        // Ground level (y=0) is stone floor
+        if (y === 0) return stoneID;
+        
+        // Maze walls at y=1 and y=2
+        if (y === 1 || y === 2) {
+            // For now, create a simple grid pattern
+            if (x % 8 === 0 || z % 8 === 0) {
+                return dirtID; // Wall
+            }
+        }
+        
+        return 0; // Air
+    }
+    
     // Set up world generation
-    noa.world.on('worldDataNeeded', (id, data, x, y, z) => {
-        // Generate chunk data
-        for (let i = 0; i < data.shape[0]; i++) {
-            for (let j = 0; j < data.shape[1]; j++) {
-                for (let k = 0; k < data.shape[2]; k++) {
-                    const worldX = x + i;
-                    const worldY = y + j;
-                    const worldZ = z + k;
-                    
-                    // Floor at y=0
-                    if (worldY === 0) {
-                        data.set(i, j, k, floorID);
-                    }
-                    
-                    // Generate maze walls
-                    if (worldY === 1 || worldY === 2) {
-                        const chunkX = Math.floor(worldX / 16);
-                        const chunkZ = Math.floor(worldZ / 16);
-                        const localX = ((worldX % 16) + 16) % 16;
-                        const localZ = ((worldZ % 16) + 16) % 16;
-                        
-                        const maze = generateMazeForChunk(chunkX, chunkZ, WORLD_SEED);
-                        
-                        if (maze[localX][localZ]) {
-                            data.set(i, j, k, wallID);
-                        }
-                    }
+    noa.world.on('worldDataNeeded', function (id, data, x, y, z) {
+        // `id` - a unique string id for the chunk
+        // `data` - an `ndarray` of voxel ID data
+        // `x, y, z` - world coords of the corner of the chunk
+        for (var i = 0; i < data.shape[0]; i++) {
+            for (var j = 0; j < data.shape[1]; j++) {
+                for (var k = 0; k < data.shape[2]; k++) {
+                    var voxelID = getVoxelID(x + i, y + j, z + k);
+                    data.set(i, j, k, voxelID);
                 }
             }
         }
+        // tell noa the chunk's terrain data is now set
+        noa.world.setChunkData(id, data);
     });
+    
+    // Log player position and surrounding blocks every second
+    setInterval(() => {
+        if (noa && noa.playerEntity) {
+            const pos = noa.entities.getPosition(noa.playerEntity);
+            console.log('Player position:', pos);
+            
+            // Check blocks around player
+            const blockBelow = noa.world.getBlockID(
+                Math.floor(pos[0]), 
+                Math.floor(pos[1] - 1), 
+                Math.floor(pos[2])
+            );
+            const blockAt = noa.world.getBlockID(
+                Math.floor(pos[0]), 
+                Math.floor(pos[1]), 
+                Math.floor(pos[2])
+            );
+            console.log(`Block below: ${blockBelow}, Block at player: ${blockAt}`);
+        }
+    }, 1000);
+    
+    // Request pointer lock on click - get canvas from container
+    const canvas = noa.container.canvas;
+    if (canvas) {
+        canvas.addEventListener('click', () => {
+            canvas.requestPointerLock();
+            console.log('Pointer lock requested');
+        });
+        
+        // Debug rendering
+        console.log('Rendering canvas:', canvas);
+        console.log('Scene:', noa.rendering.getScene());
+        console.log('Registered blocks:', { wallID, floorID });
+    } else {
+        console.error('Canvas not found!');
+    }
+    
+    // Force initial chunk generation after a delay
+    console.log('Engine initialized!');
+    setTimeout(() => {
+        noa.world.tick();
+    }, 100);
 }
 
 // Start periodic state updates

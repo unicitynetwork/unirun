@@ -37,6 +37,7 @@
     "webpack-cli": "^6.0.1"
   },
   "dependencies": {
+    "@babylonjs/core": "^5.57.1",
     "@unicitylabs/commons": "^2.4.0-rc.a5f85b0",
     "@unicitylabs/state-transition-sdk": "^1.4.7",
     "noa-engine": "^0.33.0"
