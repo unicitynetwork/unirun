@@ -164,27 +164,30 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
         
         // Add exits
         if (exits.east) {
-            // East exit at latitude 13
-            const exitZ = 13;
+            // East exit at latitude 12-14 (3 blocks wide)
             for (let x = roomX + width; x < chunkSize; x++) {
-                tiles[x][exitZ] = 'corridor_east';
+                for (let z = 12; z <= 14; z++) {
+                    tiles[x][z] = 'corridor_east';
+                }
             }
         }
         
         if (exits.north) {
-            // North exit at center (longitude 15)
-            const exitX = 15;
+            // North exit at longitude 14-16 (3 blocks wide)
             // North exit goes from the north edge of the room to the north edge of the chunk
             for (let z = roomZ + length; z < chunkSize; z++) {
-                tiles[exitX][z] = 'corridor_north';
+                for (let x = 14; x <= 16; x++) {
+                    tiles[x][z] = 'corridor_north';
+                }
             }
         }
         
         if (exits.west) {
-            // West exit at latitude 17
-            const exitZ = 17;
+            // West exit at latitude 16-18 (3 blocks wide)
             for (let x = 0; x < roomX; x++) {
-                tiles[x][exitZ] = 'corridor_west';
+                for (let z = 16; z <= 18; z++) {
+                    tiles[x][z] = 'corridor_west';
+                }
             }
         }
         
@@ -194,9 +197,11 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
             if (roomExists(checkX, chunkZ, seed)) {
                 const neighborExits = getRoomExits(checkX, chunkZ, seed);
                 if (neighborExits.east) {
-                    // Generate east-bound corridor entering our room
+                    // Generate east-bound corridor entering our room (3 blocks wide)
                     for (let x = 0; x < roomX; x++) {
-                        tiles[x][13] = 'corridor_east';
+                        for (let z = 12; z <= 14; z++) {
+                            tiles[x][z] = 'corridor_east';
+                        }
                     }
                 }
                 break; // Stop at first room found
@@ -208,11 +213,13 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
             if (roomExists(chunkX, checkZ, seed)) {
                 const neighborExits = getRoomExits(chunkX, checkZ, seed);
                 if (neighborExits.north) {
-                    // Generate north-bound corridor entering our room from the south
+                    // Generate north-bound corridor entering our room from the south (3 blocks wide)
                     console.log(`Room at (${chunkX}, ${chunkZ}): Receiving NORTH corridor from room at (${chunkX}, ${checkZ})`);
                     // Corridor comes from the south edge of chunk to the south edge of room
                     for (let z = 0; z < roomZ; z++) {
-                        tiles[15][z] = 'corridor_north';
+                        for (let x = 14; x <= 16; x++) {
+                            tiles[x][z] = 'corridor_north';
+                        }
                     }
                 }
                 break; // Stop at first room found
@@ -224,9 +231,11 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
             if (roomExists(checkX, chunkZ, seed)) {
                 const neighborExits = getRoomExits(checkX, chunkZ, seed);
                 if (neighborExits.west) {
-                    // Generate west-bound corridor entering our room
+                    // Generate west-bound corridor entering our room (3 blocks wide)
                     for (let x = roomX + width; x < chunkSize; x++) {
-                        tiles[x][17] = 'corridor_west';
+                        for (let z = 16; z <= 18; z++) {
+                            tiles[x][z] = 'corridor_west';
+                        }
                     }
                 }
                 break; // Stop at first room found
@@ -239,11 +248,13 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
             if (roomExists(checkX, chunkZ, seed)) {
                 const exits = getRoomExits(checkX, chunkZ, seed);
                 if (exits.east) {
-                    // Generate east-bound corridor through entire chunk
+                    // Generate east-bound corridor through entire chunk (3 blocks wide)
                     for (let x = 0; x < chunkSize; x++) {
-                        // Don't overwrite existing corridors at intersections
-                        if (tiles[x][13] === 'wall') {
-                            tiles[x][13] = 'corridor_east';
+                        for (let z = 12; z <= 14; z++) {
+                            // Don't overwrite existing corridors at intersections
+                            if (tiles[x][z] === 'wall') {
+                                tiles[x][z] = 'corridor_east';
+                            }
                         }
                     }
                 }
@@ -258,10 +269,12 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
                 const exits = getRoomExits(chunkX, checkZ, seed);
                 foundSouthRoom = true;
                 if (exits.north) {
-                    // Generate north-bound corridor through entire chunk
+                    // Generate north-bound corridor through entire chunk (3 blocks wide)
                     console.log(`Chunk (${chunkX}, ${chunkZ}): Generating NORTH corridor from room at (${chunkX}, ${checkZ})`);
                     for (let z = 0; z < chunkSize; z++) {
-                        tiles[15][z] = 'corridor_north';
+                        for (let x = 14; x <= 16; x++) {
+                            tiles[x][z] = 'corridor_north';
+                        }
                     }
                     // Debug: verify corridor was placed
                     let corridorCount = 0;
@@ -286,11 +299,13 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
             if (roomExists(checkX, chunkZ, seed)) {
                 const exits = getRoomExits(checkX, chunkZ, seed);
                 if (exits.west) {
-                    // Generate west-bound corridor through entire chunk
+                    // Generate west-bound corridor through entire chunk (3 blocks wide)
                     for (let x = 0; x < chunkSize; x++) {
-                        // Don't overwrite existing corridors at intersections
-                        if (tiles[x][17] === 'wall') {
-                            tiles[x][17] = 'corridor_west';
+                        for (let z = 16; z <= 18; z++) {
+                            // Don't overwrite existing corridors at intersections
+                            if (tiles[x][z] === 'wall') {
+                                tiles[x][z] = 'corridor_west';
+                            }
                         }
                     }
                 }
@@ -312,15 +327,19 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
     if (northCount > 0 || (Math.abs(chunkX) <= 5 && Math.abs(chunkZ - (-20)) <= 5)) {
         console.log(`Chunk (${chunkX}, ${chunkZ}) final tiles: ${northCount} north, ${eastCount} east, ${westCount} west corridors`);
         
-        // Debug x=15 column
-        let x15tiles = [];
-        for (let z = 0; z < chunkSize; z++) {
-            if (tiles[15][z] !== 'wall') {
-                x15tiles.push(`z=${z}: ${tiles[15][z]}`);
+        // Debug x=14-16 columns (3-block wide north corridor)
+        let corridorDebug = [];
+        for (let x = 14; x <= 16; x++) {
+            let nonWallTiles = 0;
+            for (let z = 0; z < chunkSize; z++) {
+                if (tiles[x][z] !== 'wall') nonWallTiles++;
+            }
+            if (nonWallTiles > 0) {
+                corridorDebug.push(`x=${x}: ${nonWallTiles} non-wall tiles`);
             }
         }
-        if (x15tiles.length > 0) {
-            console.log(`Chunk (${chunkX}, ${chunkZ}) x=15 column: ${x15tiles.join(', ')}`);
+        if (corridorDebug.length > 0) {
+            console.log(`Chunk (${chunkX}, ${chunkZ}) north corridor columns: ${corridorDebug.join(', ')}`);
         }
     }
     
