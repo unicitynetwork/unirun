@@ -214,7 +214,6 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
                 const neighborExits = getRoomExits(chunkX, checkZ, seed);
                 if (neighborExits.north) {
                     // Generate north-bound corridor entering our room from the south (3 blocks wide)
-                    console.log(`Room at (${chunkX}, ${chunkZ}): Receiving NORTH corridor from room at (${chunkX}, ${checkZ})`);
                     // Corridor comes from the south edge of chunk to the south edge of room
                     for (let z = 0; z < roomZ; z++) {
                         for (let x = 14; x <= 16; x++) {
@@ -270,28 +269,14 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
                 foundSouthRoom = true;
                 if (exits.north) {
                     // Generate north-bound corridor through entire chunk (3 blocks wide)
-                    console.log(`Chunk (${chunkX}, ${chunkZ}): Generating NORTH corridor from room at (${chunkX}, ${checkZ})`);
                     for (let z = 0; z < chunkSize; z++) {
                         for (let x = 14; x <= 16; x++) {
                             tiles[x][z] = 'corridor_north';
                         }
                     }
-                    // Debug: verify corridor was placed
-                    let corridorCount = 0;
-                    for (let x = 0; x < chunkSize; x++) {
-                        for (let z = 0; z < chunkSize; z++) {
-                            if (tiles[x][z] === 'corridor_north') corridorCount++;
-                        }
-                    }
-                    console.log(`Chunk (${chunkX}, ${chunkZ}): Placed ${corridorCount} north corridor tiles`);
-                } else {
-                    console.log(`Chunk (${chunkX}, ${chunkZ}): Room at (${chunkX}, ${checkZ}) has NO north exit`);
                 }
                 break; // Stop at first room found
             }
-        }
-        if (!foundSouthRoom && Math.abs(chunkX) <= 3 && Math.abs(chunkZ) <= 3) {
-            console.log(`Chunk (${chunkX}, ${chunkZ}): No room found to the south within 20 chunks`);
         }
         
         // Check West (from the closest room to the east)
@@ -314,34 +299,6 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
         }
     }
     
-    // Debug: Count corridor tiles
-    let northCount = 0, eastCount = 0, westCount = 0;
-    for (let x = 0; x < chunkSize; x++) {
-        for (let z = 0; z < chunkSize; z++) {
-            if (tiles[x][z] === 'corridor_north') northCount++;
-            if (tiles[x][z] === 'corridor_east') eastCount++;
-            if (tiles[x][z] === 'corridor_west') westCount++;
-        }
-    }
-    
-    if (northCount > 0 || (Math.abs(chunkX) <= 5 && Math.abs(chunkZ - (-20)) <= 5)) {
-        console.log(`Chunk (${chunkX}, ${chunkZ}) final tiles: ${northCount} north, ${eastCount} east, ${westCount} west corridors`);
-        
-        // Debug x=14-16 columns (3-block wide north corridor)
-        let corridorDebug = [];
-        for (let x = 14; x <= 16; x++) {
-            let nonWallTiles = 0;
-            for (let z = 0; z < chunkSize; z++) {
-                if (tiles[x][z] !== 'wall') nonWallTiles++;
-            }
-            if (nonWallTiles > 0) {
-                corridorDebug.push(`x=${x}: ${nonWallTiles} non-wall tiles`);
-            }
-        }
-        if (corridorDebug.length > 0) {
-            console.log(`Chunk (${chunkX}, ${chunkZ}) north corridor columns: ${corridorDebug.join(', ')}`);
-        }
-    }
     
     return tiles;
 }
@@ -525,6 +482,24 @@ function setupNoaEngine() {
     // Create engine
     noa = new Engine(opts);
     
+    // Log default camera parameters
+    console.log('Default camera parameters:', {
+        zoomDistance: noa.camera.zoomDistance,
+        pitch: noa.camera.pitch,
+        heading: noa.camera.heading,
+        currentZoom: noa.camera.currentZoom,
+        cameraTarget: noa.camera.cameraTarget
+    });
+    
+    // Set up 3rd person camera - looking from behind and above
+    noa.camera.zoomDistance = 10;  // Increased distance for better view
+    noa.camera.pitch = 0.333;      // Positive pitch looks up (about 19 degrees)
+    
+    console.log('Updated camera parameters:', {
+        zoomDistance: noa.camera.zoomDistance,
+        pitch: noa.camera.pitch
+    });
+    
     // Register materials - using simple colors
     var brownish = [0.45, 0.36, 0.22];
     var grayish = [0.6, 0.6, 0.6];
@@ -548,7 +523,6 @@ function setupNoaEngine() {
     var corridorNorthID = noa.registry.registerBlock(5, { material: 'corridorNorth' });
     var corridorWestID = noa.registry.registerBlock(6, { material: 'corridorWest' });
     
-    console.log('Registered blocks - dirtID:', dirtID, 'stoneID:', stoneID);
     
     // Set player position from token
     const playerState = getPlayerState();
@@ -560,19 +534,8 @@ function setupNoaEngine() {
         position = [8, 5, 8];
     }
     
-    console.log('Setting player position to:', position);
     noa.entities.setPosition(noa.playerEntity, position);
     
-    // Make sure player has a mesh
-    const playerMesh = noa.entities.getPositionData(noa.playerEntity);
-    console.log('Player entity:', noa.playerEntity, 'mesh data:', playerMesh);
-    
-    // Log camera info
-    console.log('Camera settings:', {
-        zoom: noa.camera.zoomDistance,
-        pitch: noa.camera.pitch,
-        position: noa.camera.getPosition()
-    });
     
     // Set up world generation with rooms and corridors
     noa.world.on('worldDataNeeded', function (id, data, x, y, z) {
@@ -608,9 +571,6 @@ function setupNoaEngine() {
                             voxelID = corridorEastID; // East corridor floor
                         } else if (level[i][k] === 'corridor_north') {
                             voxelID = corridorNorthID; // North corridor floor
-                            if (Math.abs(chunkX) <= 2 && Math.abs(chunkZ) <= 2 && i === 15) {
-                                console.log(`Placing north corridor at chunk (${chunkX}, ${chunkZ}), local (${i}, ${k}), world (${worldX}, ${worldZ})`);
-                            }
                         } else if (level[i][k] === 'corridor_west') {
                             voxelID = corridorWestID; // West corridor floor
                         } else {
@@ -631,26 +591,6 @@ function setupNoaEngine() {
         noa.world.setChunkData(id, data);
     });
     
-    // Log player position and surrounding blocks every second
-    setInterval(() => {
-        if (noa && noa.playerEntity) {
-            const pos = noa.entities.getPosition(noa.playerEntity);
-            console.log('Player position:', pos);
-            
-            // Check blocks around player
-            const blockBelow = noa.world.getBlockID(
-                Math.floor(pos[0]), 
-                Math.floor(pos[1] - 1), 
-                Math.floor(pos[2])
-            );
-            const blockAt = noa.world.getBlockID(
-                Math.floor(pos[0]), 
-                Math.floor(pos[1]), 
-                Math.floor(pos[2])
-            );
-            console.log(`Block below: ${blockBelow}, Block at player: ${blockAt}`);
-        }
-    }, 1000);
     
     // Force chunk generation periodically
     setInterval(() => {
@@ -673,10 +613,6 @@ function setupNoaEngine() {
             console.log('Pointer lock requested');
         });
         
-        // Debug rendering
-        console.log('Rendering canvas:', canvas);
-        console.log('Scene:', noa.rendering.getScene());
-        console.log('Registered blocks:', { dirtID, stoneID, roomFloorID, corridorEastID, corridorNorthID, corridorWestID });
     } else {
         console.error('Canvas not found!');
     }
@@ -699,9 +635,6 @@ function forceChunkGeneration() {
         noa.world.tick();
     }
     
-    // Get info about loaded chunks
-    const loadedChunks = Object.keys(noa.world._chunkIDsKnown || {}).length;
-    console.log(`Chunks currently loaded: ${loadedChunks}`);
 }
 
 // Start periodic state updates
