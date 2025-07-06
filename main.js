@@ -52,7 +52,7 @@ function seededRandom(seed) {
 function calculateInitialSpawnPoint(seed) {
     const rng = seededRandom(seed + '_spawn');
     // Generate a simple maze pattern for chunk 0,0
-    const chunkSize = 16;
+    const chunkSize = 32;
     const maze = generateMazeForChunk(0, 0, seed);
     
     // Find the first open space near the center
@@ -78,7 +78,7 @@ function calculateInitialSpawnPoint(seed) {
 
 // Generate maze for a specific chunk using recursive backtracker
 function generateMazeForChunk(chunkX, chunkZ, seed) {
-    const chunkSize = 16;
+    const chunkSize = 32; // Match noa chunk size
     const maze = Array(chunkSize).fill(null).map(() => Array(chunkSize).fill(true));
     const rng = seededRandom(seed + '_chunk_' + chunkX + '_' + chunkZ);
     
@@ -360,38 +360,52 @@ function setupNoaEngine() {
         position: noa.camera.getPosition()
     });
     
-    // Create flat terrain with maze walls
-    function getVoxelID(x, y, z) {
-        // Underground is all dirt
-        if (y < 0) return dirtID;
-        
-        // Ground level (y=0) is stone floor
-        if (y === 0) return stoneID;
-        
-        // Maze walls at y=1 and y=2
-        if (y === 1 || y === 2) {
-            // For now, create a simple grid pattern
-            if (x % 8 === 0 || z % 8 === 0) {
-                return dirtID; // Wall
-            }
-        }
-        
-        return 0; // Air
-    }
-    
-    // Set up world generation
+    // Set up world generation with maze
     noa.world.on('worldDataNeeded', function (id, data, x, y, z) {
-        // `id` - a unique string id for the chunk
-        // `data` - an `ndarray` of voxel ID data
-        // `x, y, z` - world coords of the corner of the chunk
-        for (var i = 0; i < data.shape[0]; i++) {
-            for (var j = 0; j < data.shape[1]; j++) {
-                for (var k = 0; k < data.shape[2]; k++) {
-                    var voxelID = getVoxelID(x + i, y + j, z + k);
+        const chunkSize = data.shape[0];
+        
+        // Calculate which chunk we're in (for maze generation)
+        const chunkX = Math.floor(x / chunkSize);
+        const chunkZ = Math.floor(z / chunkSize);
+        
+        // Generate maze for this chunk
+        const maze = generateMazeForChunk(chunkX, chunkZ, WORLD_SEED);
+        
+        // Fill the chunk
+        for (var i = 0; i < chunkSize; i++) {
+            for (var j = 0; j < chunkSize; j++) {
+                for (var k = 0; k < chunkSize; k++) {
+                    const worldX = x + i;
+                    const worldY = y + j;
+                    const worldZ = z + k;
+                    
+                    // Calculate position within chunk for maze lookup
+                    const mazeX = i;
+                    const mazeZ = k;
+                    
+                    let voxelID = 0;
+                    
+                    // Underground is all dirt
+                    if (worldY < 0) {
+                        voxelID = dirtID;
+                    }
+                    // Ground level (y=0) is stone floor
+                    else if (worldY === 0) {
+                        voxelID = stoneID;
+                    }
+                    // Maze walls at y=1 and y=2
+                    else if ((worldY === 1 || worldY === 2) && 
+                             mazeX >= 0 && mazeX < chunkSize && 
+                             mazeZ >= 0 && mazeZ < chunkSize &&
+                             maze[mazeX][mazeZ]) {
+                        voxelID = dirtID; // Wall
+                    }
+                    
                     data.set(i, j, k, voxelID);
                 }
             }
         }
+        
         // tell noa the chunk's terrain data is now set
         noa.world.setChunkData(id, data);
     });
