@@ -51,9 +51,9 @@ function seededRandom(seed) {
 // Calculate initial spawn point deterministically
 function calculateInitialSpawnPoint(seed) {
     const rng = seededRandom(seed + '_spawn');
-    // Generate a simple maze pattern for chunk 0,0
+    // Generate level pattern for chunk 0,0
     const chunkSize = 32;
-    const maze = generateMazeForChunk(0, 0, seed);
+    const level = generateLevelForChunk(0, 0, seed);
     
     // Find the first open space near the center
     const centerX = Math.floor(chunkSize / 2);
@@ -65,7 +65,7 @@ function calculateInitialSpawnPoint(seed) {
             for (let dz = -radius; dz <= radius; dz++) {
                 const x = centerX + dx;
                 const z = centerZ + dz;
-                if (x >= 0 && x < chunkSize && z >= 0 && z < chunkSize && !maze[x][z]) {
+                if (x >= 0 && x < chunkSize && z >= 0 && z < chunkSize && level[x][z] === 'floor') {
                     return [x + 0.5, 1, z + 0.5]; // Center of the block, 1 unit above ground
                 }
             }
@@ -76,77 +76,325 @@ function calculateInitialSpawnPoint(seed) {
     return [centerX + 0.5, 1, centerZ + 0.5];
 }
 
-// Generate maze for a specific chunk using recursive backtracker
-function generateMazeForChunk(chunkX, chunkZ, seed) {
+// Generate level structure for a chunk (rooms and corridors)
+function generateLevelForChunk(chunkX, chunkZ, seed) {
     const chunkSize = 32; // Match noa chunk size
-    const maze = Array(chunkSize).fill(null).map(() => Array(chunkSize).fill(true));
+    const tiles = Array(chunkSize).fill(null).map(() => Array(chunkSize).fill('wall'));
     const rng = seededRandom(seed + '_chunk_' + chunkX + '_' + chunkZ);
     
-    // Recursive backtracker algorithm
-    const stack = [];
-    const visited = Array(chunkSize).fill(null).map(() => Array(chunkSize).fill(false));
+    // Determine if this chunk contains a room or corridors
+    const hasRoom = rng() < 0.3; // 30% chance of room
     
-    // Start from a random position
-    let currentX = Math.floor(rng() * chunkSize);
-    let currentZ = Math.floor(rng() * chunkSize);
+    if (hasRoom) {
+        // Generate a room in this chunk
+        generateRoom(tiles, rng, chunkSize);
+    } else {
+        // Generate corridors
+        generateCorridors(tiles, rng, chunkSize, chunkX, chunkZ, seed);
+    }
     
-    // Make sure starting position is odd for proper maze generation
-    currentX = currentX % 2 === 0 ? currentX + 1 : currentX;
-    currentZ = currentZ % 2 === 0 ? currentZ + 1 : currentZ;
+    // Ensure chunk edges connect properly
+    ensureChunkConnections(tiles, chunkX, chunkZ, seed);
     
-    if (currentX >= chunkSize) currentX = chunkSize - 2;
-    if (currentZ >= chunkSize) currentZ = chunkSize - 2;
+    return tiles;
+}
+
+// Generate a room in the chunk
+function generateRoom(tiles, rng, chunkSize) {
+    // Room must be at least 4x4, leave space for walls
+    const minSize = 6;
+    const maxSize = chunkSize - 6;
     
-    visited[currentX][currentZ] = true;
-    maze[currentX][currentZ] = false; // Open space
-    stack.push([currentX, currentZ]);
+    const roomWidth = Math.floor(rng() * (maxSize - minSize) + minSize);
+    const roomHeight = Math.floor(rng() * (maxSize - minSize) + minSize);
     
-    const directions = [[0, 2], [2, 0], [0, -2], [-2, 0]];
+    const roomX = Math.floor((chunkSize - roomWidth) / 2);
+    const roomZ = Math.floor((chunkSize - roomHeight) / 2);
     
-    while (stack.length > 0) {
-        // Get unvisited neighbors
-        const neighbors = [];
-        for (const [dx, dz] of directions) {
-            const newX = currentX + dx;
-            const newZ = currentZ + dz;
-            if (newX > 0 && newX < chunkSize - 1 && newZ > 0 && newZ < chunkSize - 1 && !visited[newX][newZ]) {
-                neighbors.push([newX, newZ, dx, dz]);
+    // Clear room interior
+    for (let x = roomX; x < roomX + roomWidth; x++) {
+        for (let z = roomZ; z < roomZ + roomHeight; z++) {
+            tiles[x][z] = 'floor';
+        }
+    }
+    
+    // Add exits (1-4 exits per room)
+    const numExits = Math.floor(rng() * 3) + 2;
+    const sides = ['north', 'south', 'east', 'west'];
+    
+    for (let i = 0; i < numExits && sides.length > 0; i++) {
+        const sideIndex = Math.floor(rng() * sides.length);
+        const side = sides.splice(sideIndex, 1)[0];
+        
+        // Create 3-tile wide corridor exit
+        if (side === 'north') {
+            const exitX = roomX + Math.floor(roomWidth / 2);
+            for (let dx = -1; dx <= 1; dx++) {
+                for (let z = 0; z < roomZ; z++) {
+                    if (exitX + dx >= 0 && exitX + dx < chunkSize) {
+                        tiles[exitX + dx][z] = 'floor';
+                    }
+                }
             }
+        } else if (side === 'south') {
+            const exitX = roomX + Math.floor(roomWidth / 2);
+            for (let dx = -1; dx <= 1; dx++) {
+                for (let z = roomZ + roomHeight; z < chunkSize; z++) {
+                    if (exitX + dx >= 0 && exitX + dx < chunkSize) {
+                        tiles[exitX + dx][z] = 'floor';
+                    }
+                }
+            }
+        } else if (side === 'east') {
+            const exitZ = roomZ + Math.floor(roomHeight / 2);
+            for (let dz = -1; dz <= 1; dz++) {
+                for (let x = roomX + roomWidth; x < chunkSize; x++) {
+                    if (exitZ + dz >= 0 && exitZ + dz < chunkSize) {
+                        tiles[x][exitZ + dz] = 'floor';
+                    }
+                }
+            }
+        } else if (side === 'west') {
+            const exitZ = roomZ + Math.floor(roomHeight / 2);
+            for (let dz = -1; dz <= 1; dz++) {
+                for (let x = 0; x < roomX; x++) {
+                    if (exitZ + dz >= 0 && exitZ + dz < chunkSize) {
+                        tiles[x][exitZ + dz] = 'floor';
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Generate corridors in the chunk
+function generateCorridors(tiles, rng, chunkSize, chunkX, chunkZ, seed) {
+    // Determine corridor pattern based on chunk position
+    const pattern = Math.abs(chunkX + chunkZ * 7) % 4;
+    
+    // Make corridors slightly offset from center but consistent
+    const offsetRange = 4;
+    const baseOffset = Math.floor(rng() * offsetRange * 2 - offsetRange);
+    
+    switch (pattern) {
+        case 0: // North-South corridor
+            const nsX = Math.floor(chunkSize / 2) + baseOffset;
+            // Ensure corridor extends all the way to edges
+            for (let z = 0; z < chunkSize; z++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    const x = nsX + dx;
+                    if (x >= 0 && x < chunkSize) {
+                        tiles[x][z] = 'floor';
+                    }
+                }
+            }
+            break;
+            
+        case 1: // East-West corridor
+            const ewZ = Math.floor(chunkSize / 2) + baseOffset;
+            // Ensure corridor extends all the way to edges
+            for (let x = 0; x < chunkSize; x++) {
+                for (let dz = -1; dz <= 1; dz++) {
+                    const z = ewZ + dz;
+                    if (z >= 0 && z < chunkSize) {
+                        tiles[x][z] = 'floor';
+                    }
+                }
+            }
+            break;
+            
+        case 2: // L-shaped corridor
+            const cornerX = Math.floor(chunkSize / 2) + Math.floor(baseOffset / 2);
+            const cornerZ = Math.floor(chunkSize / 2) + Math.floor(baseOffset / 2);
+            // Vertical part - extend to north edge
+            for (let z = 0; z <= cornerZ + 1; z++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    const x = cornerX + dx;
+                    if (x >= 0 && x < chunkSize) {
+                        tiles[x][z] = 'floor';
+                    }
+                }
+            }
+            // Horizontal part - extend to east edge
+            for (let x = cornerX - 1; x < chunkSize; x++) {
+                for (let dz = -1; dz <= 1; dz++) {
+                    const z = cornerZ + dz;
+                    if (z >= 0 && z < chunkSize) {
+                        tiles[x][z] = 'floor';
+                    }
+                }
+            }
+            break;
+            
+        case 3: // Cross intersection
+            const crossX = Math.floor(chunkSize / 2) + Math.floor(baseOffset / 2);
+            const crossZ = Math.floor(chunkSize / 2) + Math.floor(baseOffset / 2);
+            // Vertical corridor - extend to both north and south edges
+            for (let z = 0; z < chunkSize; z++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    const x = crossX + dx;
+                    if (x >= 0 && x < chunkSize) {
+                        tiles[x][z] = 'floor';
+                    }
+                }
+            }
+            // Horizontal corridor - extend to both east and west edges
+            for (let x = 0; x < chunkSize; x++) {
+                for (let dz = -1; dz <= 1; dz++) {
+                    const z = crossZ + dz;
+                    if (z >= 0 && z < chunkSize) {
+                        tiles[x][z] = 'floor';
+                    }
+                }
+            }
+            break;
+    }
+}
+
+// Ensure chunks connect properly at edges
+function ensureChunkConnections(tiles, chunkX, chunkZ, seed) {
+    const chunkSize = tiles.length;
+    const rng = seededRandom(seed + '_connections');
+    
+    // Check each neighboring chunk and align connections
+    const neighbors = [
+        { dx: 0, dz: -1, edge: 'north' }, // North neighbor
+        { dx: 0, dz: 1, edge: 'south' },  // South neighbor
+        { dx: -1, dz: 0, edge: 'west' },  // West neighbor
+        { dx: 1, dz: 0, edge: 'east' }    // East neighbor
+    ];
+    
+    neighbors.forEach(neighbor => {
+        const neighborX = chunkX + neighbor.dx;
+        const neighborZ = chunkZ + neighbor.dz;
+        
+        // Generate neighbor chunk pattern to check its edge
+        const neighborTiles = generateChunkPattern(neighborX, neighborZ, seed, chunkSize);
+        
+        // Find connection points based on edge
+        let connectionsMade = 0;
+        
+        switch (neighbor.edge) {
+            case 'north': // Check our north edge with neighbor's south edge
+                for (let x = 0; x < chunkSize; x++) {
+                    if (neighborTiles && neighborTiles[x] && neighborTiles[x][chunkSize - 1] === 'floor') {
+                        // Neighbor has floor at south edge, create connection
+                        for (let dz = 0; dz < 3; dz++) {
+                            if (dz < chunkSize) {
+                                tiles[x][dz] = 'floor';
+                            }
+                        }
+                        connectionsMade++;
+                    }
+                }
+                break;
+                
+            case 'south': // Check our south edge with neighbor's north edge
+                for (let x = 0; x < chunkSize; x++) {
+                    if (neighborTiles && neighborTiles[x] && neighborTiles[x][0] === 'floor') {
+                        // Neighbor has floor at north edge, create connection
+                        for (let dz = 0; dz < 3; dz++) {
+                            if (chunkSize - 1 - dz >= 0) {
+                                tiles[x][chunkSize - 1 - dz] = 'floor';
+                            }
+                        }
+                        connectionsMade++;
+                    }
+                }
+                break;
+                
+            case 'west': // Check our west edge with neighbor's east edge
+                for (let z = 0; z < chunkSize; z++) {
+                    if (neighborTiles && neighborTiles[chunkSize - 1] && neighborTiles[chunkSize - 1][z] === 'floor') {
+                        // Neighbor has floor at east edge, create connection
+                        for (let dx = 0; dx < 3; dx++) {
+                            if (dx < chunkSize) {
+                                tiles[dx][z] = 'floor';
+                            }
+                        }
+                        connectionsMade++;
+                    }
+                }
+                break;
+                
+            case 'east': // Check our east edge with neighbor's west edge
+                for (let z = 0; z < chunkSize; z++) {
+                    if (neighborTiles && neighborTiles[0] && neighborTiles[0][z] === 'floor') {
+                        // Neighbor has floor at west edge, create connection
+                        for (let dx = 0; dx < 3; dx++) {
+                            if (chunkSize - 1 - dx >= 0) {
+                                tiles[chunkSize - 1 - dx][z] = 'floor';
+                            }
+                        }
+                        connectionsMade++;
+                    }
+                }
+                break;
         }
         
-        if (neighbors.length > 0) {
-            // Choose random neighbor
-            const [nextX, nextZ, dx, dz] = neighbors[Math.floor(rng() * neighbors.length)];
-            
-            // Remove wall between current and next
-            maze[currentX + dx/2][currentZ + dz/2] = false;
-            maze[nextX][nextZ] = false;
-            
-            visited[nextX][nextZ] = true;
-            stack.push([nextX, nextZ]);
-            currentX = nextX;
-            currentZ = nextZ;
-        } else {
-            // Backtrack
-            const [prevX, prevZ] = stack.pop();
-            currentX = prevX;
-            currentZ = prevZ;
-        }
-    }
-    
-    // Open up the edges for continuous world
-    for (let i = 0; i < chunkSize; i++) {
-        if (i % 2 === 1) {
-            if (chunkX !== 0 || chunkZ !== 0) { // Don't open edges of spawn chunk
-                maze[0][i] = false;
-                maze[chunkSize - 1][i] = false;
-                maze[i][0] = false;
-                maze[i][chunkSize - 1] = false;
+        // If no connections were made, ensure at least one connection at the center
+        if (connectionsMade === 0) {
+            const center = Math.floor(chunkSize / 2);
+            switch (neighbor.edge) {
+                case 'north':
+                    for (let x = center - 1; x <= center + 1; x++) {
+                        for (let z = 0; z < 3; z++) {
+                            if (x >= 0 && x < chunkSize && z < chunkSize) {
+                                tiles[x][z] = 'floor';
+                            }
+                        }
+                    }
+                    break;
+                case 'south':
+                    for (let x = center - 1; x <= center + 1; x++) {
+                        for (let z = chunkSize - 3; z < chunkSize; z++) {
+                            if (x >= 0 && x < chunkSize && z >= 0) {
+                                tiles[x][z] = 'floor';
+                            }
+                        }
+                    }
+                    break;
+                case 'west':
+                    for (let z = center - 1; z <= center + 1; z++) {
+                        for (let x = 0; x < 3; x++) {
+                            if (x < chunkSize && z >= 0 && z < chunkSize) {
+                                tiles[x][z] = 'floor';
+                            }
+                        }
+                    }
+                    break;
+                case 'east':
+                    for (let z = center - 1; z <= center + 1; z++) {
+                        for (let x = chunkSize - 3; x < chunkSize; x++) {
+                            if (x >= 0 && z >= 0 && z < chunkSize) {
+                                tiles[x][z] = 'floor';
+                            }
+                        }
+                    }
+                    break;
             }
         }
+    });
+}
+
+// Generate only the pattern of a chunk without full generation (for connection checking)
+function generateChunkPattern(chunkX, chunkZ, seed, chunkSize) {
+    const tiles = Array(chunkSize).fill(null).map(() => Array(chunkSize).fill('wall'));
+    const rng = seededRandom(seed + '_chunk_' + chunkX + '_' + chunkZ);
+    
+    // Determine if this chunk contains a room or corridors
+    const hasRoom = rng() < 0.3; // 30% chance of room
+    
+    if (hasRoom) {
+        // Generate a room in this chunk
+        generateRoom(tiles, rng, chunkSize);
+    } else {
+        // Generate corridors
+        generateCorridors(tiles, rng, chunkSize, chunkX, chunkZ, seed);
     }
     
-    return maze;
+    // Don't call ensureChunkConnections here to avoid recursion
+    return tiles;
 }
 
 // Initialize player token management
@@ -360,16 +608,16 @@ function setupNoaEngine() {
         position: noa.camera.getPosition()
     });
     
-    // Set up world generation with maze
+    // Set up world generation with rooms and corridors
     noa.world.on('worldDataNeeded', function (id, data, x, y, z) {
         const chunkSize = data.shape[0];
         
-        // Calculate which chunk we're in (for maze generation)
+        // Calculate which chunk we're in
         const chunkX = Math.floor(x / chunkSize);
         const chunkZ = Math.floor(z / chunkSize);
         
-        // Generate maze for this chunk
-        const maze = generateMazeForChunk(chunkX, chunkZ, WORLD_SEED);
+        // Generate level structure for this chunk
+        const level = generateLevelForChunk(chunkX, chunkZ, WORLD_SEED);
         
         // Fill the chunk
         for (var i = 0; i < chunkSize; i++) {
@@ -379,25 +627,23 @@ function setupNoaEngine() {
                     const worldY = y + j;
                     const worldZ = z + k;
                     
-                    // Calculate position within chunk for maze lookup
-                    const mazeX = i;
-                    const mazeZ = k;
-                    
                     let voxelID = 0;
                     
                     // Underground is all dirt
                     if (worldY < 0) {
                         voxelID = dirtID;
                     }
-                    // Ground level (y=0) is stone floor
+                    // Ground level (y=0)
                     else if (worldY === 0) {
-                        voxelID = stoneID;
+                        // Check if this is floor or wall
+                        if (level[i][k] === 'floor') {
+                            voxelID = stoneID; // Floor
+                        } else {
+                            voxelID = dirtID; // Solid ground under walls
+                        }
                     }
-                    // Maze walls at y=1 and y=2
-                    else if ((worldY === 1 || worldY === 2) && 
-                             mazeX >= 0 && mazeX < chunkSize && 
-                             mazeZ >= 0 && mazeZ < chunkSize &&
-                             maze[mazeX][mazeZ]) {
+                    // Walls at y=1 and y=2
+                    else if ((worldY === 1 || worldY === 2) && level[i][k] === 'wall') {
                         voxelID = dirtID; // Wall
                     }
                     
