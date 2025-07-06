@@ -65,7 +65,7 @@ function calculateInitialSpawnPoint(seed) {
             for (let dz = -radius; dz <= radius; dz++) {
                 const x = centerX + dx;
                 const z = centerZ + dz;
-                if (x >= 0 && x < chunkSize && z >= 0 && z < chunkSize && level[x][z] === 'floor') {
+                if (x >= 0 && x < chunkSize && z >= 0 && z < chunkSize && level[x][z] !== 'wall') {
                     return [x + 0.5, 1, z + 0.5]; // Center of the block, 1 unit above ground
                 }
             }
@@ -82,19 +82,24 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
     const tiles = Array(chunkSize).fill(null).map(() => Array(chunkSize).fill('wall'));
     const rng = seededRandom(seed + '_chunk_' + chunkX + '_' + chunkZ);
     
-    // Determine if this chunk contains a room or corridors
-    const hasRoom = rng() < 0.3; // 30% chance of room
+    // Use a 2x2 grid pattern for simpler, more connected layout
+    // Every other chunk has a room, with corridors in between
+    const isRoomX = Math.abs(chunkX) % 2 === 0;
+    const isRoomZ = Math.abs(chunkZ) % 2 === 0;
     
-    if (hasRoom) {
-        // Generate a room in this chunk
+    if (isRoomX && isRoomZ) {
+        // Room chunk
         generateRoom(tiles, rng, chunkSize);
+    } else if (!isRoomX && !isRoomZ) {
+        // Intersection chunk - create a small room at the intersection
+        generateIntersectionRoom(tiles, rng, chunkSize);
+    } else if (isRoomX && !isRoomZ) {
+        // North-South corridor
+        generateNSCorridor(tiles, chunkSize);
     } else {
-        // Generate corridors
-        generateCorridors(tiles, rng, chunkSize, chunkX, chunkZ, seed);
+        // East-West corridor
+        generateEWCorridor(tiles, chunkSize);
     }
-    
-    // Ensure chunk edges connect properly
-    ensureChunkConnections(tiles, chunkX, chunkZ, seed);
     
     return tiles;
 }
@@ -114,7 +119,7 @@ function generateRoom(tiles, rng, chunkSize) {
     // Clear room interior
     for (let x = roomX; x < roomX + roomWidth; x++) {
         for (let z = roomZ; z < roomZ + roomHeight; z++) {
-            tiles[x][z] = 'floor';
+            tiles[x][z] = 'room';
         }
     }
     
@@ -132,7 +137,7 @@ function generateRoom(tiles, rng, chunkSize) {
             for (let dx = -1; dx <= 1; dx++) {
                 for (let z = 0; z < roomZ; z++) {
                     if (exitX + dx >= 0 && exitX + dx < chunkSize) {
-                        tiles[exitX + dx][z] = 'floor';
+                        tiles[exitX + dx][z] = 'corridor';
                     }
                 }
             }
@@ -141,7 +146,7 @@ function generateRoom(tiles, rng, chunkSize) {
             for (let dx = -1; dx <= 1; dx++) {
                 for (let z = roomZ + roomHeight; z < chunkSize; z++) {
                     if (exitX + dx >= 0 && exitX + dx < chunkSize) {
-                        tiles[exitX + dx][z] = 'floor';
+                        tiles[exitX + dx][z] = 'corridor';
                     }
                 }
             }
@@ -150,7 +155,7 @@ function generateRoom(tiles, rng, chunkSize) {
             for (let dz = -1; dz <= 1; dz++) {
                 for (let x = roomX + roomWidth; x < chunkSize; x++) {
                     if (exitZ + dz >= 0 && exitZ + dz < chunkSize) {
-                        tiles[x][exitZ + dz] = 'floor';
+                        tiles[x][exitZ + dz] = 'corridor';
                     }
                 }
             }
@@ -159,9 +164,168 @@ function generateRoom(tiles, rng, chunkSize) {
             for (let dz = -1; dz <= 1; dz++) {
                 for (let x = 0; x < roomX; x++) {
                     if (exitZ + dz >= 0 && exitZ + dz < chunkSize) {
-                        tiles[x][exitZ + dz] = 'floor';
+                        tiles[x][exitZ + dz] = 'corridor';
                     }
                 }
+            }
+        }
+    }
+}
+
+// Generate an intersection room (small room at corridor crossings)
+function generateIntersectionRoom(tiles, rng, chunkSize) {
+    const roomSize = 8; // Small room
+    const roomX = Math.floor((chunkSize - roomSize) / 2);
+    const roomZ = Math.floor((chunkSize - roomSize) / 2);
+    
+    // Clear room interior
+    for (let x = roomX; x < roomX + roomSize; x++) {
+        for (let z = roomZ; z < roomZ + roomSize; z++) {
+            tiles[x][z] = 'room';
+        }
+    }
+    
+    // Create corridors extending in all four directions
+    const center = Math.floor(chunkSize / 2);
+    
+    // North corridor
+    for (let z = 0; z < roomZ; z++) {
+        for (let dx = -1; dx <= 1; dx++) {
+            tiles[center + dx][z] = 'corridor';
+        }
+    }
+    
+    // South corridor
+    for (let z = roomZ + roomSize; z < chunkSize; z++) {
+        for (let dx = -1; dx <= 1; dx++) {
+            tiles[center + dx][z] = 'corridor';
+        }
+    }
+    
+    // West corridor
+    for (let x = 0; x < roomX; x++) {
+        for (let dz = -1; dz <= 1; dz++) {
+            tiles[x][center + dz] = 'corridor';
+        }
+    }
+    
+    // East corridor
+    for (let x = roomX + roomSize; x < chunkSize; x++) {
+        for (let dz = -1; dz <= 1; dz++) {
+            tiles[x][center + dz] = 'corridor';
+        }
+    }
+}
+
+// Generate a North-South corridor
+function generateNSCorridor(tiles, chunkSize) {
+    const center = Math.floor(chunkSize / 2);
+    for (let z = 0; z < chunkSize; z++) {
+        for (let dx = -1; dx <= 1; dx++) {
+            tiles[center + dx][z] = 'corridor';
+        }
+    }
+}
+
+// Generate an East-West corridor
+function generateEWCorridor(tiles, chunkSize) {
+    const center = Math.floor(chunkSize / 2);
+    for (let x = 0; x < chunkSize; x++) {
+        for (let dz = -1; dz <= 1; dz++) {
+            tiles[x][center + dz] = 'corridor';
+        }
+    }
+}
+
+// Generate corridors that connect to neighboring rooms
+function generateConnectingCorridors(tiles, rng, chunkSize, localX, localZ) {
+    const center = Math.floor(chunkSize / 2);
+    
+    // Based on position in 3x3 grid, create corridors that connect rooms
+    // localX and localZ are 0, 1, or 2
+    
+    if (localX === 1 && localZ === 0) {
+        // North corridor of room - straight N-S corridor
+        for (let z = 0; z < chunkSize; z++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                tiles[center + dx][z] = 'corridor';
+            }
+        }
+    } else if (localX === 1 && localZ === 2) {
+        // South corridor of room - straight N-S corridor
+        for (let z = 0; z < chunkSize; z++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                tiles[center + dx][z] = 'corridor';
+            }
+        }
+    } else if (localX === 0 && localZ === 1) {
+        // West corridor of room - straight E-W corridor
+        for (let x = 0; x < chunkSize; x++) {
+            for (let dz = -1; dz <= 1; dz++) {
+                tiles[x][center + dz] = 'corridor';
+            }
+        }
+    } else if (localX === 2 && localZ === 1) {
+        // East corridor of room - straight E-W corridor
+        for (let x = 0; x < chunkSize; x++) {
+            for (let dz = -1; dz <= 1; dz++) {
+                tiles[x][center + dz] = 'corridor';
+            }
+        }
+    } else if (localX === 0 && localZ === 0) {
+        // NW corner - L-shaped corridor connecting south and east
+        // Vertical part (connecting to south)
+        for (let z = center; z < chunkSize; z++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                tiles[center + dx][z] = 'corridor';
+            }
+        }
+        // Horizontal part (connecting to east)
+        for (let x = center; x < chunkSize; x++) {
+            for (let dz = -1; dz <= 1; dz++) {
+                tiles[x][center + dz] = 'corridor';
+            }
+        }
+    } else if (localX === 2 && localZ === 0) {
+        // NE corner - L-shaped corridor connecting south and west
+        // Vertical part (connecting to south)
+        for (let z = center; z < chunkSize; z++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                tiles[center + dx][z] = 'corridor';
+            }
+        }
+        // Horizontal part (connecting to west)
+        for (let x = 0; x <= center; x++) {
+            for (let dz = -1; dz <= 1; dz++) {
+                tiles[x][center + dz] = 'corridor';
+            }
+        }
+    } else if (localX === 0 && localZ === 2) {
+        // SW corner - L-shaped corridor connecting north and east
+        // Vertical part (connecting to north)
+        for (let z = 0; z <= center; z++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                tiles[center + dx][z] = 'corridor';
+            }
+        }
+        // Horizontal part (connecting to east)
+        for (let x = center; x < chunkSize; x++) {
+            for (let dz = -1; dz <= 1; dz++) {
+                tiles[x][center + dz] = 'corridor';
+            }
+        }
+    } else if (localX === 2 && localZ === 2) {
+        // SE corner - L-shaped corridor connecting north and west
+        // Vertical part (connecting to north)
+        for (let z = 0; z <= center; z++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                tiles[center + dx][z] = 'corridor';
+            }
+        }
+        // Horizontal part (connecting to west)
+        for (let x = 0; x <= center; x++) {
+            for (let dz = -1; dz <= 1; dz++) {
+                tiles[x][center + dz] = 'corridor';
             }
         }
     }
@@ -184,7 +348,7 @@ function generateCorridors(tiles, rng, chunkSize, chunkX, chunkZ, seed) {
                 for (let dx = -1; dx <= 1; dx++) {
                     const x = nsX + dx;
                     if (x >= 0 && x < chunkSize) {
-                        tiles[x][z] = 'floor';
+                        tiles[x][z] = 'corridor';
                     }
                 }
             }
@@ -197,7 +361,7 @@ function generateCorridors(tiles, rng, chunkSize, chunkX, chunkZ, seed) {
                 for (let dz = -1; dz <= 1; dz++) {
                     const z = ewZ + dz;
                     if (z >= 0 && z < chunkSize) {
-                        tiles[x][z] = 'floor';
+                        tiles[x][z] = 'corridor';
                     }
                 }
             }
@@ -211,7 +375,7 @@ function generateCorridors(tiles, rng, chunkSize, chunkX, chunkZ, seed) {
                 for (let dx = -1; dx <= 1; dx++) {
                     const x = cornerX + dx;
                     if (x >= 0 && x < chunkSize) {
-                        tiles[x][z] = 'floor';
+                        tiles[x][z] = 'corridor';
                     }
                 }
             }
@@ -220,7 +384,7 @@ function generateCorridors(tiles, rng, chunkSize, chunkX, chunkZ, seed) {
                 for (let dz = -1; dz <= 1; dz++) {
                     const z = cornerZ + dz;
                     if (z >= 0 && z < chunkSize) {
-                        tiles[x][z] = 'floor';
+                        tiles[x][z] = 'corridor';
                     }
                 }
             }
@@ -234,7 +398,7 @@ function generateCorridors(tiles, rng, chunkSize, chunkX, chunkZ, seed) {
                 for (let dx = -1; dx <= 1; dx++) {
                     const x = crossX + dx;
                     if (x >= 0 && x < chunkSize) {
-                        tiles[x][z] = 'floor';
+                        tiles[x][z] = 'corridor';
                     }
                 }
             }
@@ -243,7 +407,7 @@ function generateCorridors(tiles, rng, chunkSize, chunkX, chunkZ, seed) {
                 for (let dz = -1; dz <= 1; dz++) {
                     const z = crossZ + dz;
                     if (z >= 0 && z < chunkSize) {
-                        tiles[x][z] = 'floor';
+                        tiles[x][z] = 'corridor';
                     }
                 }
             }
@@ -277,11 +441,11 @@ function ensureChunkConnections(tiles, chunkX, chunkZ, seed) {
         switch (neighbor.edge) {
             case 'north': // Check our north edge with neighbor's south edge
                 for (let x = 0; x < chunkSize; x++) {
-                    if (neighborTiles && neighborTiles[x] && neighborTiles[x][chunkSize - 1] === 'floor') {
+                    if (neighborTiles && neighborTiles[x] && neighborTiles[x][chunkSize - 1] !== 'wall') {
                         // Neighbor has floor at south edge, create connection
                         for (let dz = 0; dz < 3; dz++) {
                             if (dz < chunkSize) {
-                                tiles[x][dz] = 'floor';
+                                tiles[x][dz] = 'corridor';
                             }
                         }
                         connectionsMade++;
@@ -291,7 +455,7 @@ function ensureChunkConnections(tiles, chunkX, chunkZ, seed) {
                 
             case 'south': // Check our south edge with neighbor's north edge
                 for (let x = 0; x < chunkSize; x++) {
-                    if (neighborTiles && neighborTiles[x] && neighborTiles[x][0] === 'floor') {
+                    if (neighborTiles && neighborTiles[x] && neighborTiles[x][0] !== 'wall') {
                         // Neighbor has floor at north edge, create connection
                         for (let dz = 0; dz < 3; dz++) {
                             if (chunkSize - 1 - dz >= 0) {
@@ -305,11 +469,11 @@ function ensureChunkConnections(tiles, chunkX, chunkZ, seed) {
                 
             case 'west': // Check our west edge with neighbor's east edge
                 for (let z = 0; z < chunkSize; z++) {
-                    if (neighborTiles && neighborTiles[chunkSize - 1] && neighborTiles[chunkSize - 1][z] === 'floor') {
+                    if (neighborTiles && neighborTiles[chunkSize - 1] && neighborTiles[chunkSize - 1][z] !== 'wall') {
                         // Neighbor has floor at east edge, create connection
                         for (let dx = 0; dx < 3; dx++) {
                             if (dx < chunkSize) {
-                                tiles[dx][z] = 'floor';
+                                tiles[dx][z] = 'corridor';
                             }
                         }
                         connectionsMade++;
@@ -319,7 +483,7 @@ function ensureChunkConnections(tiles, chunkX, chunkZ, seed) {
                 
             case 'east': // Check our east edge with neighbor's west edge
                 for (let z = 0; z < chunkSize; z++) {
-                    if (neighborTiles && neighborTiles[0] && neighborTiles[0][z] === 'floor') {
+                    if (neighborTiles && neighborTiles[0] && neighborTiles[0][z] !== 'wall') {
                         // Neighbor has floor at west edge, create connection
                         for (let dx = 0; dx < 3; dx++) {
                             if (chunkSize - 1 - dx >= 0) {
@@ -340,7 +504,7 @@ function ensureChunkConnections(tiles, chunkX, chunkZ, seed) {
                     for (let x = center - 1; x <= center + 1; x++) {
                         for (let z = 0; z < 3; z++) {
                             if (x >= 0 && x < chunkSize && z < chunkSize) {
-                                tiles[x][z] = 'floor';
+                                tiles[x][z] = 'corridor';
                             }
                         }
                     }
@@ -349,7 +513,7 @@ function ensureChunkConnections(tiles, chunkX, chunkZ, seed) {
                     for (let x = center - 1; x <= center + 1; x++) {
                         for (let z = chunkSize - 3; z < chunkSize; z++) {
                             if (x >= 0 && x < chunkSize && z >= 0) {
-                                tiles[x][z] = 'floor';
+                                tiles[x][z] = 'corridor';
                             }
                         }
                     }
@@ -358,7 +522,7 @@ function ensureChunkConnections(tiles, chunkX, chunkZ, seed) {
                     for (let z = center - 1; z <= center + 1; z++) {
                         for (let x = 0; x < 3; x++) {
                             if (x < chunkSize && z >= 0 && z < chunkSize) {
-                                tiles[x][z] = 'floor';
+                                tiles[x][z] = 'corridor';
                             }
                         }
                     }
@@ -367,7 +531,7 @@ function ensureChunkConnections(tiles, chunkX, chunkZ, seed) {
                     for (let z = center - 1; z <= center + 1; z++) {
                         for (let x = chunkSize - 3; x < chunkSize; x++) {
                             if (x >= 0 && z >= 0 && z < chunkSize) {
-                                tiles[x][z] = 'floor';
+                                tiles[x][z] = 'corridor';
                             }
                         }
                     }
@@ -382,15 +546,18 @@ function generateChunkPattern(chunkX, chunkZ, seed, chunkSize) {
     const tiles = Array(chunkSize).fill(null).map(() => Array(chunkSize).fill('wall'));
     const rng = seededRandom(seed + '_chunk_' + chunkX + '_' + chunkZ);
     
-    // Determine if this chunk contains a room or corridors
-    const hasRoom = rng() < 0.3; // 30% chance of room
+    // Use the same 2x2 grid logic as generateLevelForChunk
+    const isRoomX = Math.abs(chunkX) % 2 === 0;
+    const isRoomZ = Math.abs(chunkZ) % 2 === 0;
     
-    if (hasRoom) {
-        // Generate a room in this chunk
+    if (isRoomX && isRoomZ) {
         generateRoom(tiles, rng, chunkSize);
+    } else if (!isRoomX && !isRoomZ) {
+        generateIntersectionRoom(tiles, rng, chunkSize);
+    } else if (isRoomX && !isRoomZ) {
+        generateNSCorridor(tiles, chunkSize);
     } else {
-        // Generate corridors
-        generateCorridors(tiles, rng, chunkSize, chunkX, chunkZ, seed);
+        generateEWCorridor(tiles, chunkSize);
     }
     
     // Don't call ensureChunkConnections here to avoid recursion
@@ -575,12 +742,19 @@ function setupNoaEngine() {
     // Register materials - using simple colors
     var brownish = [0.45, 0.36, 0.22];
     var grayish = [0.6, 0.6, 0.6];
+    var roomFloorColor = [0.4, 0.5, 0.4]; // Greenish for rooms
+    var corridorFloorColor = [0.5, 0.4, 0.3]; // Brownish for corridors
+    
     noa.registry.registerMaterial('dirt', { color: brownish });
     noa.registry.registerMaterial('stone', { color: grayish });
+    noa.registry.registerMaterial('roomFloor', { color: roomFloorColor });
+    noa.registry.registerMaterial('corridorFloor', { color: corridorFloorColor });
     
     // Register blocks
     var dirtID = noa.registry.registerBlock(1, { material: 'dirt' });
     var stoneID = noa.registry.registerBlock(2, { material: 'stone' });
+    var roomFloorID = noa.registry.registerBlock(3, { material: 'roomFloor' });
+    var corridorFloorID = noa.registry.registerBlock(4, { material: 'corridorFloor' });
     
     console.log('Registered blocks - dirtID:', dirtID, 'stoneID:', stoneID);
     
@@ -636,8 +810,10 @@ function setupNoaEngine() {
                     // Ground level (y=0)
                     else if (worldY === 0) {
                         // Check if this is floor or wall
-                        if (level[i][k] === 'floor') {
-                            voxelID = stoneID; // Floor
+                        if (level[i][k] === 'room') {
+                            voxelID = roomFloorID; // Room floor
+                        } else if (level[i][k] === 'corridor') {
+                            voxelID = corridorFloorID; // Corridor floor
                         } else {
                             voxelID = dirtID; // Solid ground under walls
                         }
@@ -688,7 +864,7 @@ function setupNoaEngine() {
         // Debug rendering
         console.log('Rendering canvas:', canvas);
         console.log('Scene:', noa.rendering.getScene());
-        console.log('Registered blocks:', { wallID, floorID });
+        console.log('Registered blocks:', { dirtID, stoneID, roomFloorID, corridorFloorID });
     } else {
         console.error('Canvas not found!');
     }
