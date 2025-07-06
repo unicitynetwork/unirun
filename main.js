@@ -123,10 +123,6 @@ function getRoomExits(x, z, seed) {
     const north = northExitExists(x, z, seed);
     const west = westExitExists(x, z, seed);
     
-    // Debug logging for first few chunks
-    if (Math.abs(x) <= 2 && Math.abs(z) <= 2) {
-        console.log(`Room exits for chunk (${x}, ${z}): East=${east}, North=${north}, West=${west}`);
-    }
     
     // If no exits, force at least one
     if (!east && !north && !west) {
@@ -149,11 +145,6 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
     
     // Check if this chunk should have a room
     const hasRoom = roomExists(chunkX, chunkZ, seed);
-    
-    // Debug logging for first few chunks
-    if (Math.abs(chunkX) <= 2 && Math.abs(chunkZ) <= 2) {
-        console.log(`Chunk (${chunkX}, ${chunkZ}): hasRoom=${hasRoom}`);
-    }
     
     if (hasRoom) {
         // Generate room
@@ -183,7 +174,8 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
         if (exits.north) {
             // North exit at center (longitude 15)
             const exitX = 15;
-            for (let z = 0; z < roomZ; z++) {
+            // North exit goes from the north edge of the room to the north edge of the chunk
+            for (let z = roomZ + length; z < chunkSize; z++) {
                 tiles[exitX][z] = 'corridor_north';
             }
         }
@@ -216,8 +208,10 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
             if (roomExists(chunkX, checkZ, seed)) {
                 const neighborExits = getRoomExits(chunkX, checkZ, seed);
                 if (neighborExits.north) {
-                    // Generate north-bound corridor entering our room
-                    for (let z = roomZ + length; z < chunkSize; z++) {
+                    // Generate north-bound corridor entering our room from the south
+                    console.log(`Room at (${chunkX}, ${chunkZ}): Receiving NORTH corridor from room at (${chunkX}, ${checkZ})`);
+                    // Corridor comes from the south edge of chunk to the south edge of room
+                    for (let z = 0; z < roomZ; z++) {
                         tiles[15][z] = 'corridor_north';
                     }
                 }
@@ -247,7 +241,10 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
                 if (exits.east) {
                     // Generate east-bound corridor through entire chunk
                     for (let x = 0; x < chunkSize; x++) {
-                        tiles[x][13] = 'corridor_east';
+                        // Don't overwrite existing corridors at intersections
+                        if (tiles[x][13] === 'wall') {
+                            tiles[x][13] = 'corridor_east';
+                        }
                     }
                 }
                 break; // Stop at first room found
@@ -255,17 +252,33 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
         }
         
         // Check South (from the closest room to the north)
+        let foundSouthRoom = false;
         for (let checkZ = chunkZ - 1; checkZ >= chunkZ - 20; checkZ--) {
             if (roomExists(chunkX, checkZ, seed)) {
                 const exits = getRoomExits(chunkX, checkZ, seed);
+                foundSouthRoom = true;
                 if (exits.north) {
                     // Generate north-bound corridor through entire chunk
+                    console.log(`Chunk (${chunkX}, ${chunkZ}): Generating NORTH corridor from room at (${chunkX}, ${checkZ})`);
                     for (let z = 0; z < chunkSize; z++) {
                         tiles[15][z] = 'corridor_north';
                     }
+                    // Debug: verify corridor was placed
+                    let corridorCount = 0;
+                    for (let x = 0; x < chunkSize; x++) {
+                        for (let z = 0; z < chunkSize; z++) {
+                            if (tiles[x][z] === 'corridor_north') corridorCount++;
+                        }
+                    }
+                    console.log(`Chunk (${chunkX}, ${chunkZ}): Placed ${corridorCount} north corridor tiles`);
+                } else {
+                    console.log(`Chunk (${chunkX}, ${chunkZ}): Room at (${chunkX}, ${checkZ}) has NO north exit`);
                 }
                 break; // Stop at first room found
             }
+        }
+        if (!foundSouthRoom && Math.abs(chunkX) <= 3 && Math.abs(chunkZ) <= 3) {
+            console.log(`Chunk (${chunkX}, ${chunkZ}): No room found to the south within 20 chunks`);
         }
         
         // Check West (from the closest room to the east)
@@ -275,11 +288,39 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
                 if (exits.west) {
                     // Generate west-bound corridor through entire chunk
                     for (let x = 0; x < chunkSize; x++) {
-                        tiles[x][17] = 'corridor_west';
+                        // Don't overwrite existing corridors at intersections
+                        if (tiles[x][17] === 'wall') {
+                            tiles[x][17] = 'corridor_west';
+                        }
                     }
                 }
                 break; // Stop at first room found
             }
+        }
+    }
+    
+    // Debug: Count corridor tiles
+    let northCount = 0, eastCount = 0, westCount = 0;
+    for (let x = 0; x < chunkSize; x++) {
+        for (let z = 0; z < chunkSize; z++) {
+            if (tiles[x][z] === 'corridor_north') northCount++;
+            if (tiles[x][z] === 'corridor_east') eastCount++;
+            if (tiles[x][z] === 'corridor_west') westCount++;
+        }
+    }
+    
+    if (northCount > 0 || (Math.abs(chunkX) <= 5 && Math.abs(chunkZ - (-20)) <= 5)) {
+        console.log(`Chunk (${chunkX}, ${chunkZ}) final tiles: ${northCount} north, ${eastCount} east, ${westCount} west corridors`);
+        
+        // Debug x=15 column
+        let x15tiles = [];
+        for (let z = 0; z < chunkSize; z++) {
+            if (tiles[15][z] !== 'wall') {
+                x15tiles.push(`z=${z}: ${tiles[15][z]}`);
+            }
+        }
+        if (x15tiles.length > 0) {
+            console.log(`Chunk (${chunkX}, ${chunkZ}) x=15 column: ${x15tiles.join(', ')}`);
         }
     }
     
@@ -457,6 +498,9 @@ function setupNoaEngine() {
         chunkSize: 32,
         chunkAddDistance: 10,
         chunkRemoveDistance: 14,
+        // Add more aggressive chunk loading
+        worldGenWhilePaused: true,
+        manuallyControlChunkLoading: false,
     };
     
     // Create engine
@@ -545,6 +589,9 @@ function setupNoaEngine() {
                             voxelID = corridorEastID; // East corridor floor
                         } else if (level[i][k] === 'corridor_north') {
                             voxelID = corridorNorthID; // North corridor floor
+                            if (Math.abs(chunkX) <= 2 && Math.abs(chunkZ) <= 2 && i === 15) {
+                                console.log(`Placing north corridor at chunk (${chunkX}, ${chunkZ}), local (${i}, ${k}), world (${worldX}, ${worldZ})`);
+                            }
                         } else if (level[i][k] === 'corridor_west') {
                             voxelID = corridorWestID; // West corridor floor
                         } else {
@@ -586,6 +633,19 @@ function setupNoaEngine() {
         }
     }, 1000);
     
+    // Force chunk generation periodically
+    setInterval(() => {
+        if (noa && noa.playerEntity) {
+            forceChunkGeneration();
+        }
+    }, 5000); // Every 5 seconds
+    
+    // Add render callback to ensure continuous chunk processing
+    noa.on('beforeRender', () => {
+        // Process world chunks on each frame for smoother loading
+        noa.world.tick();
+    });
+    
     // Request pointer lock on click - get canvas from container
     const canvas = noa.container.canvas;
     if (canvas) {
@@ -602,11 +662,27 @@ function setupNoaEngine() {
         console.error('Canvas not found!');
     }
     
+    // Force immediate chunk generation
+    forceChunkGeneration();
+    
     // Force initial chunk generation after a delay
     console.log('Engine initialized!');
     setTimeout(() => {
         noa.world.tick();
     }, 100);
+}
+
+// Force immediate chunk generation
+function forceChunkGeneration() {
+    // Trigger multiple world ticks to force chunk loading
+    // noa-engine handles chunk loading based on player position automatically
+    for (let i = 0; i < 10; i++) {
+        noa.world.tick();
+    }
+    
+    // Get info about loaded chunks
+    const loadedChunks = Object.keys(noa.world._chunkIDsKnown || {}).length;
+    console.log(`Chunks currently loaded: ${loadedChunks}`);
 }
 
 // Start periodic state updates
