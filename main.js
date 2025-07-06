@@ -35,16 +35,22 @@ async function initializeGame() {
     startPeriodicUpdates();
 }
 
-// Seeded random number generator
+// Seeded random number generator with better distribution
 function seededRandom(seed) {
-    let value = 0;
+    // Convert string seed to a numeric hash
+    let hash = 0;
     for (let i = 0; i < seed.length; i++) {
-        value = ((value << 5) - value) + seed.charCodeAt(i);
-        value = value & value;
+        const char = seed.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash; // Convert to 32-bit integer
     }
+    
+    // Use a better PRNG algorithm (Mulberry32)
     return function() {
-        value = (value * 1103515245 + 12345) & 0x7fffffff;
-        return value / 0x7fffffff;
+        let t = hash += 0x6D2B79F5;
+        t = Math.imul(t ^ t >>> 15, t | 1);
+        t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
     };
 }
 
@@ -79,7 +85,8 @@ function calculateInitialSpawnPoint(seed) {
 // RNG functions for room and exit determination
 function roomExists(x, z, seed) {
     const rng = seededRandom(seed + '_room_' + x + '_' + z);
-    return rng() < 0.4; // 40% chance of room
+    const result = rng() < 0.4; // 40% chance of room
+    return result;
 }
 
 function getRoomDimensions(x, z, seed) {
@@ -90,18 +97,24 @@ function getRoomDimensions(x, z, seed) {
 }
 
 function eastExitExists(x, z, seed) {
-    const rng = seededRandom(seed + '_eastexit_' + x + '_' + z);
-    return rng() < 0.6; // 60% chance
+    // Use a more unique seed to avoid patterns
+    const rng = seededRandom(seed + '_exit_east_' + (x * 1000) + '_' + (z * 1000));
+    const result = rng() < 0.6; // 60% chance
+    return result;
 }
 
 function northExitExists(x, z, seed) {
-    const rng = seededRandom(seed + '_northexit_' + x + '_' + z);
-    return rng() < 0.6; // 60% chance
+    // Use a more unique seed to avoid patterns
+    const rng = seededRandom(seed + '_exit_north_' + (x * 1000) + '_' + (z * 1000));
+    const result = rng() < 0.6; // 60% chance
+    return result;
 }
 
 function westExitExists(x, z, seed) {
-    const rng = seededRandom(seed + '_westexit_' + x + '_' + z);
-    return rng() < 0.6; // 60% chance
+    // Use a more unique seed to avoid patterns
+    const rng = seededRandom(seed + '_exit_west_' + (x * 1000) + '_' + (z * 1000));
+    const result = rng() < 0.6; // 60% chance
+    return result;
 }
 
 // Ensure at least one exit exists
@@ -110,9 +123,14 @@ function getRoomExits(x, z, seed) {
     const north = northExitExists(x, z, seed);
     const west = westExitExists(x, z, seed);
     
+    // Debug logging for first few chunks
+    if (Math.abs(x) <= 2 && Math.abs(z) <= 2) {
+        console.log(`Room exits for chunk (${x}, ${z}): East=${east}, North=${north}, West=${west}`);
+    }
+    
     // If no exits, force at least one
     if (!east && !north && !west) {
-        const rng = seededRandom(seed + '_forcedexit_' + x + '_' + z);
+        const rng = seededRandom(seed + '_forcedexit_' + (x * 1000) + '_' + (z * 1000));
         const choice = Math.floor(rng() * 3);
         return {
             east: choice === 0,
@@ -130,7 +148,14 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
     const tiles = Array(chunkSize).fill(null).map(() => Array(chunkSize).fill('wall'));
     
     // Check if this chunk should have a room
-    if (roomExists(chunkX, chunkZ, seed)) {
+    const hasRoom = roomExists(chunkX, chunkZ, seed);
+    
+    // Debug logging for first few chunks
+    if (Math.abs(chunkX) <= 2 && Math.abs(chunkZ) <= 2) {
+        console.log(`Chunk (${chunkX}, ${chunkZ}): hasRoom=${hasRoom}`);
+    }
+    
+    if (hasRoom) {
         // Generate room
         const { width, length } = getRoomDimensions(chunkX, chunkZ, seed);
         const roomX = Math.floor((chunkSize - width) / 2);
@@ -171,89 +196,89 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
             }
         }
         
-        // Also check for incoming corridors from neighboring chunks
-        // Check East (from chunk to the west)
-        for (let checkX = chunkX - 1; checkX >= chunkX - 10; checkX--) {
+        // Check for incoming corridors from the closest room in each direction
+        // Check East (from the closest room to the west)
+        for (let checkX = chunkX - 1; checkX >= chunkX - 20; checkX--) {
             if (roomExists(checkX, chunkZ, seed)) {
                 const neighborExits = getRoomExits(checkX, chunkZ, seed);
                 if (neighborExits.east) {
-                    // Generate east-bound corridor at latitude 13
+                    // Generate east-bound corridor entering our room
                     for (let x = 0; x < roomX; x++) {
                         tiles[x][13] = 'corridor_east';
                     }
                 }
-                break;
+                break; // Stop at first room found
             }
         }
         
-        // Check South (from chunk to the north)
-        for (let checkZ = chunkZ - 1; checkZ >= chunkZ - 10; checkZ--) {
+        // Check South (from the closest room to the north)  
+        for (let checkZ = chunkZ - 1; checkZ >= chunkZ - 20; checkZ--) {
             if (roomExists(chunkX, checkZ, seed)) {
                 const neighborExits = getRoomExits(chunkX, checkZ, seed);
                 if (neighborExits.north) {
-                    // Generate north-bound corridor at longitude 15
+                    // Generate north-bound corridor entering our room
                     for (let z = roomZ + length; z < chunkSize; z++) {
                         tiles[15][z] = 'corridor_north';
                     }
                 }
-                break;
+                break; // Stop at first room found
             }
         }
         
-        // Check West (from chunk to the east)
-        for (let checkX = chunkX + 1; checkX <= chunkX + 10; checkX++) {
+        // Check West (from the closest room to the east)
+        for (let checkX = chunkX + 1; checkX <= chunkX + 20; checkX++) {
             if (roomExists(checkX, chunkZ, seed)) {
                 const neighborExits = getRoomExits(checkX, chunkZ, seed);
                 if (neighborExits.west) {
-                    // Generate west-bound corridor at latitude 17
+                    // Generate west-bound corridor entering our room
                     for (let x = roomX + width; x < chunkSize; x++) {
                         tiles[x][17] = 'corridor_west';
                     }
                 }
-                break;
+                break; // Stop at first room found
             }
         }
     } else {
-        // No room in this chunk - check for corridors from neighboring chunks
-        // Check East (from chunk to the west)
-        for (let checkX = chunkX - 1; checkX >= chunkX - 10; checkX--) {
+        // No room in this chunk - check for corridors from the closest room in each direction
+        // Check East (from the closest room to the west)
+        for (let checkX = chunkX - 1; checkX >= chunkX - 20; checkX--) {
             if (roomExists(checkX, chunkZ, seed)) {
                 const exits = getRoomExits(checkX, chunkZ, seed);
                 if (exits.east) {
-                    // Generate east-bound corridor at latitude 13
+                    // Generate east-bound corridor through entire chunk
                     for (let x = 0; x < chunkSize; x++) {
                         tiles[x][13] = 'corridor_east';
                     }
                 }
-                break;
+                break; // Stop at first room found
             }
         }
         
-        // Check South (from chunk to the north)
-        for (let checkZ = chunkZ - 1; checkZ >= chunkZ - 10; checkZ--) {
+        // Check South (from the closest room to the north)
+        for (let checkZ = chunkZ - 1; checkZ >= chunkZ - 20; checkZ--) {
             if (roomExists(chunkX, checkZ, seed)) {
                 const exits = getRoomExits(chunkX, checkZ, seed);
                 if (exits.north) {
-                    // Generate north-bound corridor at longitude 15
+                    // Generate north-bound corridor through entire chunk
                     for (let z = 0; z < chunkSize; z++) {
                         tiles[15][z] = 'corridor_north';
                     }
                 }
-                break;
+                break; // Stop at first room found
             }
         }
         
-        // Check West (from chunk to the east)
-        for (let checkX = chunkX + 1; checkX <= chunkX + 10; checkX++) {
+        // Check West (from the closest room to the east)
+        for (let checkX = chunkX + 1; checkX <= chunkX + 20; checkX++) {
             if (roomExists(checkX, chunkZ, seed)) {
                 const exits = getRoomExits(checkX, chunkZ, seed);
                 if (exits.west) {
-                    // Generate west-bound corridor at latitude 17
+                    // Generate west-bound corridor through entire chunk
                     for (let x = 0; x < chunkSize; x++) {
                         tiles[x][17] = 'corridor_west';
                     }
                 }
-                break;
+                break; // Stop at first room found
             }
         }
     }
