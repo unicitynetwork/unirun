@@ -166,9 +166,17 @@ async function initializePlayerToken() {
         const tokenId = window.UnicitySDK.TokenId.create(window.UnicitySDK.HexConverter.decode(tokenData.id));
         const tokenType = window.UnicitySDK.TokenType.create(window.UnicitySDK.HexConverter.decode(tokenData.type));
         
-        // Recreate predicate
-        const predicateFactory = new window.UnicitySDK.PredicateFactory();
-        const predicate = predicateFactory.create(tokenId, tokenType, tokenData.state.predicate);
+        // Recreate predicate based on type
+        console.log('Loading predicate from:', tokenData.state.predicate);
+        let predicate;
+        if (tokenData.state.predicate.type === 'UNMASKED') {
+            predicate = await window.UnicitySDK.UnmaskedPredicate.fromJSON(tokenId, tokenType, tokenData.state.predicate);
+        } else if (tokenData.state.predicate.type === 'MASKED') {
+            predicate = await window.UnicitySDK.MaskedPredicate.fromJSON(tokenId, tokenType, tokenData.state.predicate);
+        } else {
+            throw new Error('Unknown predicate type: ' + tokenData.state.predicate.type);
+        }
+        console.log('Recreated predicate:', predicate);
         
         // Recreate token state
         const stateData = tokenData.state.data ? window.UnicitySDK.HexConverter.decode(tokenData.state.data) : null;
@@ -188,6 +196,8 @@ async function initializePlayerToken() {
         );
         
         console.log("Existing player token imported.", playerToken);
+        console.log("Token state:", playerToken.state);
+        console.log("Unlock predicate:", playerToken.state?.unlockPredicate);
     } else {
         // New player flow
         await createNewPlayerToken();
@@ -221,11 +231,10 @@ async function createNewPlayerToken() {
     const tokenType = window.UnicitySDK.TokenType.create(new Uint8Array([1])); // Simple type ID
     
     // Create predicate (unmasked for simplicity)
-    const predicate = await window.UnicitySDK.UnmaskedPredicate.createFromPublicKey(
+    const predicate = await window.UnicitySDK.UnmaskedPredicate.create(
         tokenId,
         tokenType,
-        'secp256k1', // algorithm
-        publicKey,
+        signingService, // pass the signing service instead of individual params
         window.UnicitySDK.HashAlgorithm.SHA256,
         crypto.getRandomValues(new Uint8Array(16)) // nonce
     );

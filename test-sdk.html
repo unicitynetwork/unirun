@@ -22,6 +22,31 @@
             console.log('Token:', window.UnicitySDK.Token);
             console.log('SigningService:', window.UnicitySDK.SigningService);
             console.log('StateTransitionClient:', window.UnicitySDK.StateTransitionClient);
+            
+            // Check UnmaskedPredicate methods
+            console.log('\nUnmaskedPredicate:', window.UnicitySDK.UnmaskedPredicate);
+            if (window.UnicitySDK.UnmaskedPredicate) {
+                console.log('UnmaskedPredicate methods:', Object.getOwnPropertyNames(window.UnicitySDK.UnmaskedPredicate));
+                console.log('UnmaskedPredicate prototype:', Object.getOwnPropertyNames(window.UnicitySDK.UnmaskedPredicate.prototype));
+            }
+            
+            // Check TokenState
+            console.log('\nTokenState:', window.UnicitySDK.TokenState);
+            if (window.UnicitySDK.TokenState) {
+                console.log('TokenState methods:', Object.getOwnPropertyNames(window.UnicitySDK.TokenState));
+                console.log('TokenState prototype:', Object.getOwnPropertyNames(window.UnicitySDK.TokenState.prototype));
+            }
+            
+            // Check PredicateFactory
+            console.log('\nPredicateFactory:', window.UnicitySDK.PredicateFactory);
+            if (window.UnicitySDK.PredicateFactory) {
+                console.log('PredicateFactory methods:', Object.getOwnPropertyNames(window.UnicitySDK.PredicateFactory));
+                console.log('PredicateFactory prototype:', Object.getOwnPropertyNames(window.UnicitySDK.PredicateFactory.prototype));
+                
+                // Try creating an instance
+                const pf = new window.UnicitySDK.PredicateFactory();
+                console.log('PredicateFactory instance methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(pf)));
+            }
         }
     </script>
 </body>
