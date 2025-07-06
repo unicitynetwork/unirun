@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SDK Test</title>
+</head>
+<body>
+    <h1>SDK Test</h1>
+    <script src="/unicity-sdk.js"></script>
+    <script>
+        console.log('UnicitySDK available:', window.UnicitySDK);
+        console.log('UnicitySDK keys:', Object.keys(window.UnicitySDK || {}));
+        if (window.UnicitySDK) {
+            console.log('Available exports:', window.UnicitySDK);
+            console.log('\nDetailed exports:');
+            Object.keys(window.UnicitySDK).forEach(key => {
+                console.log(`- ${key}:`, window.UnicitySDK[key]);
+            });
+            
+            // Check for specific expected functions
+            console.log('\nChecking for expected functions:');
+            console.log('TokenFactory:', window.UnicitySDK.TokenFactory);
+            console.log('Token:', window.UnicitySDK.Token);
+            console.log('SigningService:', window.UnicitySDK.SigningService);
+            console.log('StateTransitionClient:', window.UnicitySDK.StateTransitionClient);
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,44 @@
+{
+  "name": "unirun",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "build-sdk": "webpack --config sdk-bundler/webpack.config.cjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/unicitynetwork/unirun.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/unicitynetwork/unirun/issues"
+  },
+  "homepage": "https://github.com/unicitynetwork/unirun#readme",
+  "devDependencies": {
+    "buffer": "^6.0.3",
+    "crypto-browserify": "^3.12.1",
+    "https-browserify": "^1.0.0",
+    "process": "^0.11.10",
+    "stream-browserify": "^3.0.0",
+    "stream-http": "^3.2.0",
+    "ts-loader": "^9.5.2",
+    "typescript": "^5.8.3",
+    "url": "^0.11.4",
+    "util": "^0.12.5",
+    "vite": "^7.0.2",
+    "webpack": "^5.99.9",
+    "webpack-cli": "^6.0.1"
+  },
+  "dependencies": {
+    "@unicitylabs/commons": "^2.4.0-rc.a5f85b0",
+    "@unicitylabs/state-transition-sdk": "^1.4.7",
+    "noa-engine": "^0.33.0"
+  }
+}
