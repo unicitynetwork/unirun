@@ -9,6 +9,12 @@ let noa;
 let playerToken;
 let signingService;
 
+// Block IDs (will be set during engine setup)
+let roomFloorID;
+let corridorEastID;
+let corridorNorthID;
+let corridorWestID;
+
 // Initialize the game when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
     initializeGame();
@@ -518,10 +524,10 @@ function setupNoaEngine() {
     // Register blocks
     var dirtID = noa.registry.registerBlock(1, { material: 'dirt' });
     var stoneID = noa.registry.registerBlock(2, { material: 'stone' });
-    var roomFloorID = noa.registry.registerBlock(3, { material: 'roomFloor' });
-    var corridorEastID = noa.registry.registerBlock(4, { material: 'corridorEast' });
-    var corridorNorthID = noa.registry.registerBlock(5, { material: 'corridorNorth' });
-    var corridorWestID = noa.registry.registerBlock(6, { material: 'corridorWest' });
+    roomFloorID = noa.registry.registerBlock(3, { material: 'roomFloor' });
+    corridorEastID = noa.registry.registerBlock(4, { material: 'corridorEast' });
+    corridorNorthID = noa.registry.registerBlock(5, { material: 'corridorNorth' });
+    corridorWestID = noa.registry.registerBlock(6, { material: 'corridorWest' });
     
     
     // Set player position from token
@@ -633,36 +639,127 @@ function setupNoaEngine() {
             corridorType = 'West';
         }
         
-        // Log current state
-        if (corridorType) {
-            console.log(`Player in ${corridorType} corridor at (${Math.floor(pos[0])}, ${Math.floor(pos[2])}), current heading: ${movement.heading.toFixed(2)}, target: ${targetHeading.toFixed(2)}`);
-        }
-        
         // Apply heading if in a corridor - force update every time
         if (targetHeading !== null) {
-            const headingDiff = Math.abs(movement.heading - targetHeading);
-            if (headingDiff > 0.01) {
-                console.log(`Auto-rotating player from ${movement.heading.toFixed(2)} to ${targetHeading.toFixed(2)}`);
-            }
             movement.heading = targetHeading;
             
-            // Also try to update camera heading to prevent mouse from overriding
+            // Also update camera heading to prevent mouse from overriding
             noa.camera.heading = targetHeading;
         }
     }, 1000); // Every second
     
-    // Add render callback to ensure continuous chunk processing
+    // Add render callback for continuous movement and chunk processing
     noa.on('beforeRender', () => {
         // Process world chunks on each frame for smoother loading
         noa.world.tick();
+        
+        // Get player movement component
+        const movement = noa.entities.getMovement(noa.playerEntity);
+        if (!movement) return;
+        
+        // Always run forward at 2x speed
+        movement.running = true;
+        noa.inputs.state.forward = true;
+        
+        // Context-sensitive A/D controls
+        const pos = noa.entities.getPosition(noa.playerEntity);
+        const blockBelow = noa.world.getBlockID(
+            Math.floor(pos[0]), 
+            Math.floor(pos[1] - 1), 
+            Math.floor(pos[2])
+        );
+        
+        // Check if we're in a corridor or room
+        const inCorridor = blockBelow === corridorEastID || 
+                          blockBelow === corridorNorthID || 
+                          blockBelow === corridorWestID;
+        const inRoom = blockBelow === roomFloorID;
+        
+        // Handle context-sensitive controls
+        if (inRoom) {
+            // In rooms: handle exit selection
+            if (noa.inputs.state.left || noa.inputs.state.right) {
+                const roomInfo = analyzeRoom(Math.floor(pos[0]), Math.floor(pos[2]));
+                const currentHeading = movement.heading;
+                
+                // Determine which direction player is currently facing
+                // Normalize heading to 0-2π range
+                let normalizedHeading = currentHeading % (2 * Math.PI);
+                if (normalizedHeading < 0) normalizedHeading += 2 * Math.PI;
+                
+                // Determine current facing direction (N/E/S/W)
+                let currentDir = 'north';
+                if (normalizedHeading >= Math.PI * 0.25 && normalizedHeading < Math.PI * 0.75) {
+                    currentDir = 'east';
+                } else if (normalizedHeading >= Math.PI * 0.75 && normalizedHeading < Math.PI * 1.25) {
+                    currentDir = 'south';
+                } else if (normalizedHeading >= Math.PI * 1.25 && normalizedHeading < Math.PI * 1.75) {
+                    currentDir = 'west';
+                }
+                
+                // Calculate target direction based on input
+                let targetExit = null;
+                if (noa.inputs.state.right) {
+                    // Turn right (clockwise)
+                    if (currentDir === 'north' && roomInfo.exits.east) targetExit = roomInfo.exits.east;
+                    else if (currentDir === 'east' && roomInfo.exits.south) targetExit = roomInfo.exits.south;
+                    else if (currentDir === 'south' && roomInfo.exits.west) targetExit = roomInfo.exits.west;
+                    else if (currentDir === 'west' && roomInfo.exits.north) targetExit = roomInfo.exits.north;
+                } else if (noa.inputs.state.left) {
+                    // Turn left (counter-clockwise)
+                    if (currentDir === 'north' && roomInfo.exits.west) targetExit = roomInfo.exits.west;
+                    else if (currentDir === 'west' && roomInfo.exits.south) targetExit = roomInfo.exits.south;
+                    else if (currentDir === 'south' && roomInfo.exits.east) targetExit = roomInfo.exits.east;
+                    else if (currentDir === 'east' && roomInfo.exits.north) targetExit = roomInfo.exits.north;
+                }
+                
+                // If no exit in desired direction, check for exit behind
+                if (!targetExit) {
+                    if (currentDir === 'north' && roomInfo.exits.south) targetExit = roomInfo.exits.south;
+                    else if (currentDir === 'south' && roomInfo.exits.north) targetExit = roomInfo.exits.north;
+                    else if (currentDir === 'east' && roomInfo.exits.west) targetExit = roomInfo.exits.west;
+                    else if (currentDir === 'west' && roomInfo.exits.east) targetExit = roomInfo.exits.east;
+                }
+                
+                // Apply the turn and position if we found an exit
+                if (targetExit) {
+                    // Set position near the exit
+                    noa.entities.setPosition(noa.playerEntity, [
+                        targetExit.x + 0.5,
+                        pos[1],
+                        targetExit.z + 0.5
+                    ]);
+                    
+                    // Set heading to face the exit
+                    movement.heading = targetExit.heading;
+                    noa.camera.heading = targetExit.heading;
+                    
+                    console.log(`Positioned at exit facing ${targetExit.heading.toFixed(2)} rad`);
+                }
+                
+                // Disable strafe
+                noa.inputs.state.left = false;
+                noa.inputs.state.right = false;
+            }
+        } else if (inCorridor) {
+            // In corridors: strafe works normally, no turning needed
+        }
     });
     
+    // Configure controls
     // Disable mouse control
     noa.camera.sensitivityX = 0;
     noa.camera.sensitivityY = 0;
     
-    // Don't request pointer lock since mouse is disabled
-    console.log('Mouse control disabled');
+    // Disable W/S keys (forward/backward)
+    noa.inputs.bind('forward', '');
+    noa.inputs.bind('backward', '');
+    
+    // Bind A/D for strafe (we'll handle turning manually in rooms)
+    noa.inputs.bind('left', 'A', 'a');
+    noa.inputs.bind('right', 'D', 'd');
+    
+    console.log('Controls configured: Mouse disabled, W/S disabled, A/D for strafe/turn');
     
     // Force immediate chunk generation
     forceChunkGeneration();
@@ -672,6 +769,53 @@ function setupNoaEngine() {
     setTimeout(() => {
         noa.world.tick();
     }, 100);
+}
+
+// Helper function to find room boundaries and exits
+function analyzeRoom(playerX, playerZ) {
+    // Find room boundaries by scanning outward from player position
+    let minX = playerX, maxX = playerX;
+    let minZ = playerZ, maxZ = playerZ;
+    
+    // Expand to find room boundaries
+    while (noa.world.getBlockID(minX - 1, 0, playerZ) === roomFloorID) minX--;
+    while (noa.world.getBlockID(maxX + 1, 0, playerZ) === roomFloorID) maxX++;
+    while (noa.world.getBlockID(playerX, 0, minZ - 1) === roomFloorID) minZ--;
+    while (noa.world.getBlockID(playerX, 0, maxZ + 1) === roomFloorID) maxZ++;
+    
+    // Find center of room
+    const centerX = Math.floor((minX + maxX) / 2);
+    const centerZ = Math.floor((minZ + maxZ) / 2);
+    
+    // Check for exits at standard positions
+    const exits = {
+        east: null,
+        north: null,
+        west: null,
+        south: null
+    };
+    
+    // Check east exit (at z=13)
+    if (noa.world.getBlockID(maxX + 1, 0, 13) === corridorEastID) {
+        exits.east = { x: maxX, z: 13, heading: Math.PI / 2 }; // Face east
+    }
+    
+    // Check north exit (at x=15) 
+    if (noa.world.getBlockID(15, 0, maxZ + 1) === corridorNorthID) {
+        exits.north = { x: 15, z: maxZ, heading: 0 }; // Face north
+    }
+    
+    // Check west exit (at z=17)
+    if (noa.world.getBlockID(minX - 1, 0, 17) === corridorWestID) {
+        exits.west = { x: minX, z: 17, heading: -Math.PI / 2 }; // Face west
+    }
+    
+    // Check south exit (at x=15) - for entering from north
+    if (noa.world.getBlockID(15, 0, minZ - 1) === corridorNorthID) {
+        exits.south = { x: 15, z: minZ, heading: Math.PI }; // Face south
+    }
+    
+    return { exits, center: { x: centerX, z: centerZ } };
 }
 
 // Force immediate chunk generation
