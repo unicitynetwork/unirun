@@ -599,23 +599,70 @@ function setupNoaEngine() {
         }
     }, 5000); // Every 5 seconds
     
+    // Check player position and rotate to face corridor direction
+    setInterval(() => {
+        if (!noa || !noa.playerEntity) return;
+        
+        const pos = noa.entities.getPosition(noa.playerEntity);
+        const blockBelow = noa.world.getBlockID(
+            Math.floor(pos[0]), 
+            Math.floor(pos[1] - 1), 
+            Math.floor(pos[2])
+        );
+        
+        // Get movement component
+        const movement = noa.entities.getMovement(noa.playerEntity);
+        if (!movement) return;
+        
+        // Determine direction based on block type
+        // corridorEastID = 4, corridorNorthID = 5, corridorWestID = 6
+        let targetHeading = null;
+        let corridorType = null;
+        
+        if (blockBelow === corridorEastID) {
+            // East corridor - face east (+X)
+            targetHeading = Math.PI / 2;
+            corridorType = 'East';
+        } else if (blockBelow === corridorNorthID) {
+            // North corridor - face north (+Z)
+            targetHeading = 0;
+            corridorType = 'North';
+        } else if (blockBelow === corridorWestID) {
+            // West corridor - face west (-X)
+            targetHeading = -Math.PI / 2;
+            corridorType = 'West';
+        }
+        
+        // Log current state
+        if (corridorType) {
+            console.log(`Player in ${corridorType} corridor at (${Math.floor(pos[0])}, ${Math.floor(pos[2])}), current heading: ${movement.heading.toFixed(2)}, target: ${targetHeading.toFixed(2)}`);
+        }
+        
+        // Apply heading if in a corridor - force update every time
+        if (targetHeading !== null) {
+            const headingDiff = Math.abs(movement.heading - targetHeading);
+            if (headingDiff > 0.01) {
+                console.log(`Auto-rotating player from ${movement.heading.toFixed(2)} to ${targetHeading.toFixed(2)}`);
+            }
+            movement.heading = targetHeading;
+            
+            // Also try to update camera heading to prevent mouse from overriding
+            noa.camera.heading = targetHeading;
+        }
+    }, 1000); // Every second
+    
     // Add render callback to ensure continuous chunk processing
     noa.on('beforeRender', () => {
         // Process world chunks on each frame for smoother loading
         noa.world.tick();
     });
     
-    // Request pointer lock on click - get canvas from container
-    const canvas = noa.container.canvas;
-    if (canvas) {
-        canvas.addEventListener('click', () => {
-            canvas.requestPointerLock();
-            console.log('Pointer lock requested');
-        });
-        
-    } else {
-        console.error('Canvas not found!');
-    }
+    // Disable mouse control
+    noa.camera.sensitivityX = 0;
+    noa.camera.sensitivityY = 0;
+    
+    // Don't request pointer lock since mouse is disabled
+    console.log('Mouse control disabled');
     
     // Force immediate chunk generation
     forceChunkGeneration();
