@@ -883,19 +883,19 @@ function setupNoaEngine() {
                 let snappedHeading = closestCardinal.heading;
                 let targetDir = currentDir; // Initialize target direction
                 
-                // Simple turning logic - NEVER turn to face south (no south exits)
+                // Simple turning logic - only turn between N/E/W (skip south)
                 if (noa.inputs.state.right) {
-                    // Turn right (clockwise), skip south
+                    // Turn right (clockwise): N->E->W->N
                     if (currentDir === 'north') targetDir = 'east';
-                    else if (currentDir === 'east') targetDir = 'west'; // Skip south!
-                    else if (currentDir === 'south') targetDir = 'west';
+                    else if (currentDir === 'east') targetDir = 'west';
                     else if (currentDir === 'west') targetDir = 'north';
+                    else if (currentDir === 'south') targetDir = 'west'; // If somehow facing south
                 } else if (noa.inputs.state.left) {
-                    // Turn left (counter-clockwise), skip south
+                    // Turn left (counter-clockwise): N->W->E->N
                     if (currentDir === 'north') targetDir = 'west';
-                    else if (currentDir === 'west') targetDir = 'east'; // Skip south!
-                    else if (currentDir === 'south') targetDir = 'east';
+                    else if (currentDir === 'west') targetDir = 'east';
                     else if (currentDir === 'east') targetDir = 'north';
+                    else if (currentDir === 'south') targetDir = 'east'; // If somehow facing south
                 }
                 
                 // Get the heading for target direction
