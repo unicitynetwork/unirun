@@ -1139,9 +1139,11 @@ function analyzeRoom(playerX, playerZ) {
         }
     }
     
-    // Check north exit - scan for corridor along north wall
+    // Check north exit - scan for corridor along north wall (at y=3 for raised corridors)
     for (let x = minX; x <= maxX; x++) {
-        if (noa.world.getBlockID(x, 0, maxZ + 1) === corridorNorthID) {
+        // Check both y=0 and y=3 for north corridors
+        if (noa.world.getBlockID(x, 0, maxZ + 1) === corridorNorthID ||
+            noa.world.getBlockID(x, 3, maxZ + 1) === corridorNorthID) {
             exits.north = { x: x, z: maxZ, heading: 0 }; // Face north
             break;
         }
@@ -1155,9 +1157,11 @@ function analyzeRoom(playerX, playerZ) {
         }
     }
     
-    // Check south exit - scan for corridor along south wall
+    // Check south exit - scan for corridor along south wall (at y=3 for raised corridors)
     for (let x = minX; x <= maxX; x++) {
-        if (noa.world.getBlockID(x, 0, minZ - 1) === corridorNorthID) {
+        // Check both y=0 and y=3 for north corridors coming from south
+        if (noa.world.getBlockID(x, 0, minZ - 1) === corridorNorthID ||
+            noa.world.getBlockID(x, 3, minZ - 1) === corridorNorthID) {
             exits.south = { x: x, z: minZ, heading: Math.PI }; // Face south
             break;
         }
