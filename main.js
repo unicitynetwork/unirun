@@ -176,10 +176,6 @@ function getRoomExits(x, z, seed) {
         
         // If we have both incoming east and outgoing east, redirect to north
         if (hasIncomingEastCorridor && east && !north) {
-            // Only log if this is the player's current chunk
-            if (playerChunkX === x && playerChunkZ === z) {
-                console.log(`Room at (${x},${z}): Redirecting east exit to north to prevent straight-through corridor`);
-            }
             east = false;
             north = true; // Force north exit instead
         }
@@ -199,17 +195,10 @@ function getRoomExits(x, z, seed) {
     return { east, north, west };
 }
 
-// Track player's current chunk for debug logging
-let playerChunkX = null;
-let playerChunkZ = null;
-
 // Generate level structure for a chunk (rooms and corridors)
 function generateLevelForChunk(chunkX, chunkZ, seed) {
     const chunkSize = 32; // Match noa chunk size
     const tiles = Array(chunkSize).fill(null).map(() => Array(chunkSize).fill('wall'));
-    
-    // Only log if this is the player's chunk
-    const isPlayerChunk = (chunkX === playerChunkX && chunkZ === playerChunkZ);
     
     // Check if this chunk should have a room
     const hasRoom = roomExists(chunkX, chunkZ, seed);
@@ -243,9 +232,6 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
         if (exits.north) {
             // North exit at longitude 14-16 (3 blocks wide)
             // North exit goes from the north edge of the room to the north edge of the chunk
-            if (isPlayerChunk) {
-                console.log(`Player chunk (${chunkX},${chunkZ}): Room has north exit, corridor from z=${roomZ + length} to z=${chunkSize-1}`);
-            }
             for (let z = roomZ + length; z < chunkSize; z++) {
                 for (let x = 14; x <= 16; x++) {
                     tiles[x][z] = 'corridor_north';
@@ -283,15 +269,9 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
         for (let checkZ = chunkZ - 1; checkZ >= chunkZ - 20; checkZ--) {
             if (roomExists(chunkX, checkZ, seed)) {
                 const neighborExits = getRoomExits(chunkX, checkZ, seed);
-                if (isPlayerChunk) {
-                    console.log(`Player chunk (${chunkX},${chunkZ}): Checking south neighbor at (${chunkX},${checkZ}), has north exit: ${neighborExits.north}`);
-                }
                 if (neighborExits.north) {
                     // Generate north-bound corridor entering our room from the south (3 blocks wide)
                     // Corridor comes from the south edge of chunk to the south edge of room
-                    if (isPlayerChunk) {
-                        console.log(`Player chunk (${chunkX},${chunkZ}): Adding incoming north corridor from z=0 to z=${roomZ-1}`);
-                    }
                     for (let z = 0; z < roomZ; z++) {
                         for (let x = 14; x <= 16; x++) {
                             tiles[x][z] = 'corridor_north';
@@ -1788,10 +1768,6 @@ function startPeriodicUpdates() {
         
         // Get current position
         const position = noa.entities.getPosition(noa.playerEntity);
-        
-        // Update player's current chunk for debug logging
-        playerChunkX = Math.floor(position[0] / 32);
-        playerChunkZ = Math.floor(position[2] / 32);
         
         // Get current state
         const currentState = getPlayerState() || {};
