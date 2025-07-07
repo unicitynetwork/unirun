@@ -596,15 +596,30 @@ function setupNoaEngine() {
                     }
                     // Walls at y=1 and y=2
                     else if ((worldY === 1 || worldY === 2) && level[i][k] === 'wall') {
-                        voxelID = dirtID; // Wall
+                        // Don't place walls where corridors should pass through
+                        // Check if we're at a location where a corridor exists at ground level
+                        if ((i >= 12 && i <= 14 && level[13][k] === 'corridor_east') || 
+                            (i >= 16 && i <= 18 && level[17][k] === 'corridor_west')) {
+                            // This is where an east/west corridor passes - no wall
+                            voxelID = 0;
+                        } else {
+                            voxelID = dirtID; // Wall
+                        }
                     }
                     // North corridors at y=3 (raised)
                     else if (worldY === 3 && level[i][k] === 'corridor_north') {
                         voxelID = corridorNorthID; // North corridor floor at y=3
                     }
-                    // Support blocks under raised north corridor
+                    // Support blocks under raised north corridor - but don't block other corridors
                     else if ((worldY === 1 || worldY === 2) && level[i][k] === 'corridor_north') {
-                        voxelID = dirtID; // Support pillars under north corridor
+                        // Check if we're at an intersection with east/west corridors
+                        // East corridor is at z=12-14, West corridor is at z=16-18
+                        if ((k >= 12 && k <= 14) || (k >= 16 && k <= 18)) {
+                            // Don't place support blocks at corridor intersections
+                            voxelID = 0;
+                        } else {
+                            voxelID = dirtID; // Support pillars under north corridor
+                        }
                     }
                     // Simple stairs at room boundaries
                     else if (i >= 14 && i <= 16) { // North corridor x range
