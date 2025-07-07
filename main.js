@@ -1,5 +1,6 @@
 // Unicity Runner Demo - Main Game Logic
 import { Engine } from 'noa-engine'
+import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
@@ -681,6 +682,30 @@ function setupNoaEngine() {
     }
     
     noa.entities.setPosition(noa.playerEntity, position);
+    
+    // Add a red cylinder mesh to the player
+    const scene = noa.rendering.getScene();
+    
+    // Create a red cylinder using Babylon.js (should be available globally)
+    const cylinder = BABYLON.MeshBuilder.CreateCylinder('playerCylinder', {
+        height: 1.8,  // Player height
+        diameter: 0.8, // Player width
+        tessellation: 16
+    }, scene);
+    
+    // Create red material
+    const mat = noa.rendering.makeStandardMaterial('playerMat');
+    mat.diffuseColor = new BABYLON.Color3(1, 0, 0); // Red color
+    mat.specularColor = new BABYLON.Color3(0, 0, 0); // No specular
+    cylinder.material = mat;
+    
+    // Add mesh component to player entity
+    noa.entities.addComponent(noa.playerEntity, noa.entities.names.mesh, {
+        mesh: cylinder,
+        offset: [0, 0.9, 0] // Offset to center the cylinder on the player
+    });
+    
+    console.log('Added red cylinder mesh to player');
     
     // Increase the player's movement speed 2x
     const playerMovement = noa.entities.getMovement(noa.playerEntity);
