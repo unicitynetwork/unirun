@@ -1971,15 +1971,16 @@ function startDroneAI() {
 function fireProjectile(fromPos, toPos) {
     const scene = noa.rendering.getScene();
     
-    // Create small yellow sphere for projectile
+    // Create tiny bullet-like projectile
     const projectile = BABYLON.MeshBuilder.CreateSphere('projectile', {
-        diameter: 0.3
+        diameter: 0.1 // Much smaller, like a bullet
     }, scene);
     
-    // Create bright yellow material
+    // Create dark metallic material for bullet
     const projectileMat = noa.rendering.makeStandardMaterial('projectileMat');
-    projectileMat.diffuseColor = new BABYLON.Color3(1, 1, 0); // Bright yellow
-    projectileMat.emissiveColor = new BABYLON.Color3(0.5, 0.5, 0); // Glow effect
+    projectileMat.diffuseColor = new BABYLON.Color3(0.2, 0.2, 0.2); // Dark gray
+    projectileMat.specularColor = new BABYLON.Color3(0.5, 0.5, 0.5); // Metallic shine
+    projectileMat.emissiveColor = new BABYLON.Color3(0.1, 0.1, 0.1); // Slight glow for visibility
     projectile.material = projectileMat;
     
     // Create projectile entity with physics
@@ -1998,27 +1999,33 @@ function fireProjectile(fromPos, toPos) {
     const dirY = dy / distance;
     const dirZ = dz / distance;
     
-    // Set projectile physics properties
-    const projectileSpeed = 10;
+    // Set projectile physics properties - behave like bullets
+    const bulletSpeed = 30; // Much faster for bullet-like behavior
     const physics = noa.entities.getPhysics(projectileEntity);
     if (physics && physics.body) {
-        physics.body.mass = 0.1;
+        physics.body.mass = 0.01; // Very light
         physics.body.friction = 0;
+        physics.body.airDrag = 0; // No air resistance
+        physics.body.fluidDrag = 0; // No drag
         physics.body.restitution = 0;
-        physics.body.gravityMultiplier = 0; // No gravity for projectiles
-        physics.body.velocity[0] = dirX * projectileSpeed;
-        physics.body.velocity[1] = dirY * projectileSpeed;
-        physics.body.velocity[2] = dirZ * projectileSpeed;
+        physics.body.gravityMultiplier = 0; // No gravity for bullets
+        // Set velocity
+        physics.body.velocity[0] = dirX * bulletSpeed;
+        physics.body.velocity[1] = dirY * bulletSpeed;
+        physics.body.velocity[2] = dirZ * bulletSpeed;
+        // Prevent physics engine from slowing it down
+        physics.body.sleepSpeedLimit = 0;
+        physics.body.sleepTimeLimit = 0;
     }
     
     // Store projectile for collision checking
     projectiles.push({
         entity: projectileEntity,
         startTime: Date.now(),
-        lifetime: 5000 // 5 seconds max lifetime
+        startPos: [...fromPos], // Store starting position for range check
+        velocity: [dirX * bulletSpeed, dirY * bulletSpeed, dirZ * bulletSpeed] // Store velocity to ensure constant speed
     });
     
-    console.log('Projectile fired!');
 }
 
 // Check projectile collisions and cleanup
@@ -2043,14 +2050,26 @@ setInterval(() => {
         if (distance < 1) { // Hit player
             damagePlayer(5);
             noa.entities.deleteEntity(proj.entity);
-            console.log('Player hit by projectile! -5 HP');
             return false;
         }
         
-        // Check lifetime
-        if (currentTime - proj.startTime > proj.lifetime) {
+        // Check range - 64 blocks max
+        const travelDx = projPos[0] - proj.startPos[0];
+        const travelDy = projPos[1] - proj.startPos[1];
+        const travelDz = projPos[2] - proj.startPos[2];
+        const travelDistance = Math.sqrt(travelDx * travelDx + travelDy * travelDy + travelDz * travelDz);
+        
+        if (travelDistance > 64) { // Exceeded max range
             noa.entities.deleteEntity(proj.entity);
             return false;
+        }
+        
+        // Ensure constant velocity (in case physics engine tries to slow it down)
+        const physics = noa.entities.getPhysics(proj.entity);
+        if (physics && physics.body) {
+            physics.body.velocity[0] = proj.velocity[0];
+            physics.body.velocity[1] = proj.velocity[1];
+            physics.body.velocity[2] = proj.velocity[2];
         }
         
         // Check if hit ground or wall
