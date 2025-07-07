@@ -1008,19 +1008,19 @@ function setupNoaEngine() {
                 let snappedHeading = closestCardinal.heading;
                 let targetDir = currentDir; // Initialize target direction
                 
-                // Simple turning logic - only turn between N/E/W (skip south)
+                // Simple turning logic - NEVER turn south
                 if (noa.inputs.state.right) {
-                    // Turn right (clockwise): N->E->W->N
+                    // Turn right (clockwise): N->E, E->nothing, S->W, W->N
                     if (currentDir === 'north') targetDir = 'east';
-                    else if (currentDir === 'east') targetDir = 'west';
+                    else if (currentDir === 'east') targetDir = currentDir; // Don't turn south!
+                    else if (currentDir === 'south') targetDir = 'west';
                     else if (currentDir === 'west') targetDir = 'north';
-                    else if (currentDir === 'south') targetDir = 'west'; // If somehow facing south
                 } else if (noa.inputs.state.left) {
-                    // Turn left (counter-clockwise): N->W->E->N
+                    // Turn left (counter-clockwise): N->W, W->nothing, S->E, E->N
                     if (currentDir === 'north') targetDir = 'west';
-                    else if (currentDir === 'west') targetDir = 'east';
+                    else if (currentDir === 'west') targetDir = currentDir; // Don't turn south!
+                    else if (currentDir === 'south') targetDir = 'east';
                     else if (currentDir === 'east') targetDir = 'north';
-                    else if (currentDir === 'south') targetDir = 'east'; // If somehow facing south
                 }
                 
                 // Get the heading for target direction
@@ -1046,7 +1046,7 @@ function setupNoaEngine() {
                     // West corridor is at z=16-18, middle is z=17
                     targetExit = { x: pos[0], z: chunkZ * 32 + 17 + 0.5 };
                 }
-                // Never exit south - rooms only have E/N/W exits!
+                // Never face south!
                 
                 console.log('Turning:', currentDir, '->', targetDir, 'heading:', targetHeading.toFixed(2));
                 console.log('Available exits:', Object.keys(roomInfo.exits).filter(dir => roomInfo.exits[dir] !== null));
