@@ -668,7 +668,33 @@ function setupNoaEngine() {
                         // Check all 4 directions for room/corridor edges
                         const currentTile = level[i][k];
                         
-                        if (currentTile === 'wall') {
+                        // Special case: if we're in a north corridor area, check for east/west corridor walls
+                        if (currentTile === 'corridor_north') {
+                            // Check if this is where east/west corridor walls should be
+                            // East corridor walls at z=11 and z=15
+                            if (k === 11 || k === 15) {
+                                // Check if there's an east corridor nearby
+                                for (let checkX = 0; checkX < 32; checkX++) {
+                                    if ((k === 11 && level[checkX][12] === 'corridor_east') ||
+                                        (k === 15 && level[checkX][14] === 'corridor_east')) {
+                                        needsWall = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            // West corridor walls at z=15 and z=19
+                            else if (k === 15 || k === 19) {
+                                // Check if there's a west corridor nearby
+                                for (let checkX = 0; checkX < 32; checkX++) {
+                                    if ((k === 15 && level[checkX][16] === 'corridor_west') ||
+                                        (k === 19 && level[checkX][18] === 'corridor_west')) {
+                                        needsWall = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        else if (currentTile === 'wall') {
                             // Check if this wall is adjacent to a room or corridor
                             const north = (k > 0) ? level[i][k-1] : 'wall';
                             const south = (k < 31) ? level[i][k+1] : 'wall';
