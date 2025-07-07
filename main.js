@@ -593,7 +593,7 @@ function setupNoaEngine() {
                     }
                     // Ground level (y=0)
                     else if (worldY === 0) {
-                        // Check if this is floor or wall
+                        // Check if this is floor or ground
                         if (level[i][k] === 'room') {
                             voxelID = roomFloorID; // Room floor
                         } else if (level[i][k] === 'corridor_east') {
@@ -615,7 +615,7 @@ function setupNoaEngine() {
                                 if (hasEastCorridor) {
                                     voxelID = corridorEastID; // Preserve east corridor floor
                                 } else {
-                                    voxelID = dirtID; // No corridor here, use dirt
+                                    voxelID = dirtID; // Ground under north corridor
                                 }
                             } else if (k >= 16 && k <= 18 && i >= 0 && i <= 31) {
                                 // Check if there's a west corridor at this chunk
@@ -629,25 +629,67 @@ function setupNoaEngine() {
                                 if (hasWestCorridor) {
                                     voxelID = corridorWestID; // Preserve west corridor floor
                                 } else {
-                                    voxelID = dirtID; // No corridor here, use dirt
+                                    voxelID = dirtID; // Ground under north corridor
                                 }
                             } else {
                                 voxelID = dirtID; // Ground under north corridor (not at intersection)
                             }
+                        } else if (level[i][k] === 'wall') {
+                            // Only place ground under walls that are next to rooms/corridors
+                            const north = (k > 0) ? level[i][k-1] : 'wall';
+                            const south = (k < 31) ? level[i][k+1] : 'wall';
+                            const east = (i < 31) ? level[i+1][k] : 'wall';
+                            const west = (i > 0) ? level[i-1][k] : 'wall';
+                            
+                            // Place ground if adjacent to room or corridor
+                            if (north === 'room' || south === 'room' ||
+                                north === 'corridor_east' || south === 'corridor_east' ||
+                                north === 'corridor_west' || south === 'corridor_west' ||
+                                north === 'corridor_north' || south === 'corridor_north' ||
+                                east === 'room' || west === 'room' ||
+                                east === 'corridor_east' || west === 'corridor_east' ||
+                                east === 'corridor_west' || west === 'corridor_west' ||
+                                east === 'corridor_north' || west === 'corridor_north') {
+                                voxelID = dirtID; // Ground under walls
+                            } else {
+                                voxelID = 0; // Empty space
+                            }
                         } else {
-                            voxelID = dirtID; // Solid ground under walls
+                            voxelID = 0; // Empty space
                         }
                     }
-                    // Walls at y=1 and y=2
-                    else if ((worldY === 1 || worldY === 2) && level[i][k] === 'wall') {
-                        // Don't place walls where corridors should pass through
-                        // Check if we're at a location where a corridor exists at ground level
-                        if ((i >= 12 && i <= 14 && level[13][k] === 'corridor_east') || 
-                            (i >= 16 && i <= 18 && level[17][k] === 'corridor_west')) {
-                            // This is where an east/west corridor passes - no wall
-                            voxelID = 0;
+                    // Walls at y=1 and y=2 - only place walls around rooms and corridors
+                    else if ((worldY === 1 || worldY === 2)) {
+                        // Check if we need a wall here by looking at adjacent tiles
+                        let needsWall = false;
+                        
+                        // Check all 4 directions for room/corridor edges
+                        const currentTile = level[i][k];
+                        
+                        if (currentTile === 'wall') {
+                            // Check if this wall is adjacent to a room or corridor
+                            const north = (k > 0) ? level[i][k-1] : 'wall';
+                            const south = (k < 31) ? level[i][k+1] : 'wall';
+                            const east = (i < 31) ? level[i+1][k] : 'wall';
+                            const west = (i > 0) ? level[i-1][k] : 'wall';
+                            
+                            // Place wall if adjacent to room or corridor
+                            if (north === 'room' || south === 'room' ||
+                                north === 'corridor_east' || south === 'corridor_east' ||
+                                north === 'corridor_west' || south === 'corridor_west' ||
+                                north === 'corridor_north' || south === 'corridor_north' ||
+                                east === 'room' || west === 'room' ||
+                                east === 'corridor_east' || west === 'corridor_east' ||
+                                east === 'corridor_west' || west === 'corridor_west' ||
+                                east === 'corridor_north' || west === 'corridor_north') {
+                                needsWall = true;
+                            }
+                        }
+                        
+                        if (needsWall) {
+                            voxelID = dirtID; // Place wall
                         } else {
-                            voxelID = dirtID; // Wall
+                            voxelID = 0; // Empty space
                         }
                     }
                     // North corridors at y=3 (raised)
