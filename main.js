@@ -125,46 +125,22 @@ function westExitExists(x, z, seed) {
     return result;
 }
 
-// Ensure at least two exits exist
+// Ensure at least one exit exists
 function getRoomExits(x, z, seed) {
     const east = eastExitExists(x, z, seed);
     const north = northExitExists(x, z, seed);
     const west = westExitExists(x, z, seed);
     
-    // Count exits
-    const exitCount = (east ? 1 : 0) + (north ? 1 : 0) + (west ? 1 : 0);
     
-    // If less than 2 exits, force additional exits
-    if (exitCount < 2) {
+    // If no exits, force at least one
+    if (!east && !north && !west) {
         const rng = seededRandom(seed + '_forcedexit_' + (x * 1000) + '_' + (z * 1000));
-        
-        if (exitCount === 0) {
-            // No exits - force two
-            const choices = ['east', 'north', 'west'];
-            const first = Math.floor(rng() * 3);
-            let second = Math.floor(rng() * 3);
-            while (second === first) {
-                second = Math.floor(rng() * 3);
-            }
-            return {
-                east: choices[first] === 'east' || choices[second] === 'east',
-                north: choices[first] === 'north' || choices[second] === 'north',
-                west: choices[first] === 'west' || choices[second] === 'west'
-            };
-        } else {
-            // One exit exists - add one more
-            const available = [];
-            if (!east) available.push('east');
-            if (!north) available.push('north');
-            if (!west) available.push('west');
-            
-            const choice = available[Math.floor(rng() * available.length)];
-            return {
-                east: east || choice === 'east',
-                north: north || choice === 'north',
-                west: west || choice === 'west'
-            };
-        }
+        const choice = Math.floor(rng() * 3);
+        return {
+            east: choice === 0,
+            north: choice === 1,
+            west: choice === 2
+        };
     }
     
     return { east, north, west };
