@@ -486,6 +486,8 @@ function setupNoaEngine() {
         // Add more aggressive chunk loading
         worldGenWhilePaused: true,
         manuallyControlChunkLoading: false,
+        // Enable auto-step for climbing stairs
+        playerAutoStep: true,
     };
     
     // Create engine
@@ -650,10 +652,43 @@ function setupNoaEngine() {
                     }
                     // North corridors at y=3 (raised)
                     else if (worldY === 3 && level[i][k] === 'corridor_north') {
-                        voxelID = corridorNorthID; // North corridor floor at y=3
+                        // Skip floor blocks where stairs are placed
+                        if (i >= 14 && i <= 16) {
+                            // Check if this is where stairs should be (first two blocks from room)
+                            let distanceFromRoom = 999;
+                            
+                            // Check south for room
+                            for (let checkK = k - 1; checkK >= 0; checkK--) {
+                                if (level[i][checkK] === 'room') {
+                                    distanceFromRoom = k - checkK - 1;
+                                    break;
+                                }
+                                if (level[i][checkK] === 'wall') break;
+                            }
+                            
+                            // Check north for room  
+                            for (let checkK = k + 1; checkK < 32; checkK++) {
+                                if (level[i][checkK] === 'room') {
+                                    const dist = checkK - k - 1;
+                                    if (dist < distanceFromRoom) distanceFromRoom = dist;
+                                    break;
+                                }
+                                if (level[i][checkK] === 'wall') break;
+                            }
+                            
+                            // Don't place floor where stairs are
+                            if (distanceFromRoom === 0 || distanceFromRoom === 1) {
+                                voxelID = 0; // No floor where stairs are
+                            } else {
+                                voxelID = corridorNorthID; // Normal corridor floor
+                            }
+                        } else {
+                            voxelID = corridorNorthID; // Normal corridor floor
+                        }
                     }
                     // Support blocks under raised north corridor - but don't block other corridors
-                    else if ((worldY === 1 || worldY === 2) && level[i][k] === 'corridor_north') {
+                    else if ((worldY === 1 || worldY === 2) && level[i][k] === 'corridor_north' && !(i >= 14 && i <= 16)) {
+                        // Skip x=14-16 as that's where stairs will be placed
                         // Check if we're at an intersection with east/west corridors
                         // East corridor is at z=12-14, West corridor is at z=16-18
                         if ((k >= 12 && k <= 14) || (k >= 16 && k <= 18)) {
@@ -663,24 +698,56 @@ function setupNoaEngine() {
                             voxelID = dirtID; // Support pillars under north corridor
                         }
                     }
-                    // Stairs at room/north corridor boundaries
-                    else if (i >= 14 && i <= 16) { // North corridor x range
-                        // Check if we're at a room boundary
-                        const southTile = (k > 0) ? level[i][k-1] : 'wall';
-                        const northTile = (k < 31) ? level[i][k+1] : 'wall';
-                        const currentTile = level[i][k];
-                        
-                        // Place stairs where room meets north corridor
-                        if ((southTile === 'room' && currentTile === 'corridor_north') ||
-                            (currentTile === 'room' && northTile === 'corridor_north')) {
-                            // Create 3-step staircase
-                            if (worldY === 1) {
-                                voxelID = stairID; // First step at y=1
-                            } else if (worldY === 2) {
-                                voxelID = stairID; // Second step at y=2
+                    // Replace first blocks of north corridor with stairs
+                    else if (i >= 14 && i <= 16 && level[i][k] === 'corridor_north') {
+                        // Skip placing stairs at corridor intersections
+                        // East corridor is at z=12-14, West corridor is at z=16-18
+                        if ((k >= 12 && k <= 14) || (k >= 16 && k <= 18)) {
+                            // At intersection - don't place stairs here
+                            if (worldY === 3) {
+                                voxelID = corridorNorthID; // Regular floor
                             }
-                            // Third step is the corridor floor at y=3
+                        } else {
+                            // Check distance from adjacent room
+                            let distanceFromRoom = 999;
+                            
+                            // Check south for room
+                            for (let checkK = k - 1; checkK >= 0; checkK--) {
+                                if (level[i][checkK] === 'room') {
+                                    distanceFromRoom = k - checkK - 1;
+                                    break;
+                                }
+                                if (level[i][checkK] === 'wall') break; // Stop at wall
+                            }
+                            
+                            // Check north for room  
+                            for (let checkK = k + 1; checkK < 32; checkK++) {
+                                if (level[i][checkK] === 'room') {
+                                    const dist = checkK - k - 1;
+                                    if (dist < distanceFromRoom) distanceFromRoom = dist;
+                                    break;
+                                }
+                                if (level[i][checkK] === 'wall') break; // Stop at wall
+                            }
+                            
+                            // Place stairs in first two blocks of corridor
+                            if (distanceFromRoom === 0) {
+                                // First block of corridor - place stair at y=1
+                                if (worldY === 1) {
+                                    voxelID = stairID;
+                                } else if (worldY === 3) {
+                                    voxelID = 0; // Remove floor at y=3
+                                }
+                            } else if (distanceFromRoom === 1) {
+                                // Second block of corridor - place stair at y=2
+                                if (worldY === 2) {
+                                    voxelID = stairID;
+                                } else if (worldY === 3) {
+                                    voxelID = 0; // Remove floor at y=3
+                                }
+                            }
                         }
+                        // Regular corridor floor at y=3 starts from the third block
                     }
                     // Walls alongside raised north corridors at y=4 and y=5
                     else if ((worldY === 4 || worldY === 5)) {
