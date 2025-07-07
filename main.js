@@ -670,6 +670,67 @@ function setupNoaEngine() {
         }
     }, 100); // Check every 100ms for faster correction
     
+    // Handle continuous auto-strafing towards exit
+    setInterval(() => {
+        if (!noa || !noa.playerEntity || !noa._targetExit) return;
+        
+        const pos = noa.entities.getPosition(noa.playerEntity);
+        const blockBelow = noa.world.getBlockID(
+            Math.floor(pos[0]), 
+            Math.floor(pos[1] - 1), 
+            Math.floor(pos[2])
+        );
+        
+        // Only strafe in rooms
+        if (blockBelow !== roomFloorID) {
+            noa._targetExit = null;
+            noa._targetDir = null;
+            return;
+        }
+        
+        const target = noa._targetExit;
+        let needsStrafe = false;
+        let strafeDir = [0, 0, 0];
+        
+        // Calculate strafe direction based on target direction
+        if (noa._targetDir === 'north' || noa._targetDir === 'south') {
+            // Need to align X position
+            const xDiff = target.x - pos[0];
+            if (Math.abs(xDiff) > 0.1) {
+                needsStrafe = true;
+                strafeDir[0] = xDiff > 0 ? 1 : -1;
+            }
+        } else if (noa._targetDir === 'east' || noa._targetDir === 'west') {
+            // Need to align Z position
+            const zDiff = target.z - pos[2];
+            if (Math.abs(zDiff) > 0.1) {
+                needsStrafe = true;
+                strafeDir[2] = zDiff > 0 ? 1 : -1;
+            }
+        }
+        
+        // Apply strafe movement if needed
+        if (needsStrafe) {
+            const physics = noa.entities.getPhysics(noa.playerEntity);
+            if (physics && physics.body) {
+                // Apply strong force for strafe movement
+                const strafeForce = 80; // Strong force for 2x speed
+                physics.body.applyForce([
+                    strafeDir[0] * strafeForce,
+                    0,
+                    strafeDir[2] * strafeForce
+                ]);
+                
+                console.log('Auto-strafing towards exit:', noa._targetDir, 'diff:', strafeDir);
+            }
+        } else {
+            // Target reached, clear it
+            noa._targetExit = null;
+            noa._targetDir = null;
+            console.log('Reached exit alignment');
+        }
+    }, 50); // Run frequently for smooth movement
+    
     // Add render callback for continuous movement and chunk processing
     noa.on('beforeRender', () => {
         // Process world chunks on each frame for smoother loading
@@ -823,6 +884,7 @@ function setupNoaEngine() {
                 // Store the target exit info for continuous strafing
                 noa._targetExit = targetExit;
                 noa._targetDir = targetDir;
+                console.log('Set target exit:', targetExit, 'direction:', targetDir);
                 
                 // Disable strafe
                 noa.inputs.state.left = false;
@@ -833,56 +895,6 @@ function setupNoaEngine() {
             // Clear any target exit when entering corridor
             noa._targetExit = null;
             noa._targetDir = null;
-        }
-        
-        // Handle continuous auto-strafing towards exit
-        if (inRoom && noa._targetExit) {
-            const target = noa._targetExit;
-            const strafeSpeed = 0.3; // 2x faster than normal walking
-            let needsStrafe = false;
-            let strafeDir = [0, 0, 0];
-            
-            // Calculate strafe direction based on target direction
-            if (noa._targetDir === 'north' || noa._targetDir === 'south') {
-                // Need to align X position
-                const xDiff = target.x - pos[0];
-                if (Math.abs(xDiff) > 0.1) {
-                    needsStrafe = true;
-                    strafeDir[0] = xDiff > 0 ? strafeSpeed : -strafeSpeed;
-                }
-            } else if (noa._targetDir === 'east' || noa._targetDir === 'west') {
-                // Need to align Z position
-                const zDiff = target.z - pos[2];
-                if (Math.abs(zDiff) > 0.1) {
-                    needsStrafe = true;
-                    strafeDir[2] = zDiff > 0 ? strafeSpeed : -strafeSpeed;
-                }
-            }
-            
-            // Apply strafe movement if needed
-            if (needsStrafe) {
-                const physics = noa.entities.getPhysics(noa.playerEntity);
-                if (physics && physics.body) {
-                    // Apply force for strafe movement
-                    const strafeForce = 60; // Strong force for 2x speed
-                    physics.body.applyForce([
-                        strafeDir[0] * strafeForce,
-                        0,
-                        strafeDir[2] * strafeForce
-                    ]);
-                    
-                    // Also maintain some base velocity to push through walls
-                    physics.body.velocity[0] += strafeDir[0] * 0.5;
-                    physics.body.velocity[2] += strafeDir[2] * 0.5;
-                    
-                    console.log('Auto-strafing towards exit:', noa._targetDir);
-                }
-            } else {
-                // Target reached, clear it
-                noa._targetExit = null;
-                noa._targetDir = null;
-                console.log('Reached exit alignment');
-            }
         }
     });
     
