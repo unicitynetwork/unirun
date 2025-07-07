@@ -2019,10 +2019,8 @@ function fireProjectile(fromPos, toPos) {
         // Prevent physics engine from slowing it down
         physics.body.sleepSpeedLimit = 0;
         physics.body.sleepTimeLimit = 0;
-    }
-    
-    // Add collision callback to detect impacts immediately
-    if (physics && physics.body) {
+        
+        // Add collision callback to detect impacts immediately
         physics.body.onCollide = function(contactInfo) {
             // Delete projectile on any collision
             setTimeout(() => {
@@ -2101,7 +2099,6 @@ setInterval(() => {
         }
         
         // Also check if velocity is near zero (stuck on surface)
-        const physics = noa.entities.getPhysics(proj.entity);
         if (physics && physics.body) {
             const vel = physics.body.velocity;
             const speed = Math.sqrt(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]);
