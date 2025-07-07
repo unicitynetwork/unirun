@@ -565,6 +565,14 @@ function setupNoaEngine() {
     
     noa.entities.setPosition(noa.playerEntity, position);
     
+    // Increase the player's movement speed 4x
+    const playerMovement = noa.entities.getMovement(noa.playerEntity);
+    if (playerMovement) {
+        playerMovement.maxSpeed *= 4; // 4x the max speed
+        playerMovement.moveSpeed *= 4; // 4x the move speed
+        console.log('Player movement speed increased 4x');
+    }
+    
     
     // Set up world generation with rooms and corridors
     noa.world.on('worldDataNeeded', function (id, data, x, y, z) {
@@ -996,6 +1004,7 @@ function setupNoaEngine() {
         if (blockBelow !== roomFloorID) {
             noa._targetExit = null;
             noa._targetDir = null;
+            noa._isAutoStrafing = false; // Clear auto-strafing flag
             return;
         }
         
@@ -1073,7 +1082,7 @@ function setupNoaEngine() {
                 }
                 
                 // Apply strong force for strafe movement
-                const baseStrafeForce = 320; // 4x increased speed (was 80)
+                const baseStrafeForce = 80; // Original speed
                 const strafeForce = baseStrafeForce * forceMult;
                 
                 physics.body.applyForce([
@@ -1082,6 +1091,19 @@ function setupNoaEngine() {
                     strafeDir[2] * strafeForce
                 ]);
                 
+                // Slow down forward movement while strafing
+                // Reduce forward/backward velocity to 25% (4x slower)
+                if (facingDir === 'north' || facingDir === 'south') {
+                    // Slow Z velocity when strafing in X direction
+                    physics.body.velocity[2] *= 0.25;
+                } else if (facingDir === 'east' || facingDir === 'west') {
+                    // Slow X velocity when strafing in Z direction  
+                    physics.body.velocity[0] *= 0.25;
+                }
+                
+                // Mark that we're auto-strafing
+                noa._isAutoStrafing = true;
+                
                 // Log strafe status occasionally
                 if (Math.random() < 0.05) {  // 5% chance, about once per second
                     console.log('Auto-strafing:', facingDir, 'to', targetExit);
@@ -1089,6 +1111,8 @@ function setupNoaEngine() {
             }
         } else {
             // Already aligned - apply stabilization
+            noa._isAutoStrafing = false; // Clear auto-strafing flag
+            
             const physics = noa.entities.getPhysics(noa.playerEntity);
             if (physics && physics.body) {
                 const velocity = physics.body.velocity;
