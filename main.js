@@ -835,67 +835,38 @@ function setupNoaEngine() {
                 let snappedHeading = closestCardinal.heading;
                 let targetDir = currentDir; // Initialize target direction
                 
-                // Get list of available exits
-                const availableExits = [];
-                if (roomInfo.exits.north) availableExits.push('north');
-                if (roomInfo.exits.east) availableExits.push('east');
-                if (roomInfo.exits.south && noa.world.getBlockID(roomInfo.exits.south.x, 0, roomInfo.exits.south.z - 1) !== corridorNorthID) {
-                    availableExits.push('south'); // Only if not leading to north corridor
+                // Simple turning logic
+                if (noa.inputs.state.right) {
+                    // Turn right (clockwise)
+                    if (currentDir === 'north') targetDir = 'east';
+                    else if (currentDir === 'east') targetDir = 'south';
+                    else if (currentDir === 'south') targetDir = 'west';
+                    else if (currentDir === 'west') targetDir = 'north';
+                } else if (noa.inputs.state.left) {
+                    // Turn left (counter-clockwise)
+                    if (currentDir === 'north') targetDir = 'west';
+                    else if (currentDir === 'west') targetDir = 'south';
+                    else if (currentDir === 'south') targetDir = 'east';
+                    else if (currentDir === 'east') targetDir = 'north';
                 }
-                if (roomInfo.exits.west) availableExits.push('west');
                 
-                console.log('Available exit directions:', availableExits);
-                
-                // If only one exit, always turn to face it
-                if (availableExits.length === 1) {
-                    targetDir = availableExits[0];
-                } else if (availableExits.length > 1) {
-                    // Multiple exits - find next available exit in turn direction
-                    const directions = ['north', 'east', 'south', 'west'];
-                    const currentIndex = directions.indexOf(currentDir);
+                // Skip south if it leads to a north corridor
+                if (targetDir === 'south') {
+                    // Check if there's a north corridor at standard south exit position
+                    const chunkX = Math.floor(pos[0] / 32);
+                    const chunkZ = Math.floor(pos[2] / 32);
+                    const localX = 15 - (chunkX * 32);
+                    const southCheckZ = Math.floor(pos[2]) - 1;
                     
-                    if (noa.inputs.state.right) {
-                        // Turn right (clockwise) to next available exit
-                        for (let i = 1; i <= 4; i++) {
-                            const nextDir = directions[(currentIndex + i) % 4];
-                            if (availableExits.includes(nextDir)) {
-                                targetDir = nextDir;
-                                break;
-                            }
-                        }
-                    } else if (noa.inputs.state.left) {
-                        // Turn left (counter-clockwise) to next available exit
-                        for (let i = 1; i <= 4; i++) {
-                            const nextDir = directions[(currentIndex - i + 4) % 4];
-                            if (availableExits.includes(nextDir)) {
-                                targetDir = nextDir;
-                                break;
-                            }
+                    if (noa.world.getBlockID(chunkX * 32 + 15, 0, southCheckZ) === corridorNorthID) {
+                        console.log('Skipping south - leads to north corridor');
+                        // Skip to next direction
+                        if (noa.inputs.state.right) {
+                            targetDir = 'west'; // south -> west when turning right
+                        } else {
+                            targetDir = 'east'; // south -> east when turning left
                         }
                     }
-                } else {
-                    // No exits available, just turn normally
-                    targetDir = currentDir;
-                    if (noa.inputs.state.right) {
-                        // Turn right (clockwise)
-                        if (currentDir === 'north') targetDir = 'east';
-                        else if (currentDir === 'east') targetDir = 'south';
-                        else if (currentDir === 'south') targetDir = 'west';
-                        else if (currentDir === 'west') targetDir = 'north';
-                    } else if (noa.inputs.state.left) {
-                        // Turn left (counter-clockwise)
-                        if (currentDir === 'north') targetDir = 'west';
-                        else if (currentDir === 'west') targetDir = 'south';
-                        else if (currentDir === 'south') targetDir = 'east';
-                        else if (currentDir === 'east') targetDir = 'north';
-                    }
-                }
-                
-                // Check if target direction is valid (not south towards north corridor)
-                if (targetDir === 'south' && roomInfo.exits.south && 
-                    noa.world.getBlockID(15, 0, roomInfo.exits.south.z - 1) === corridorNorthID) {
-                    console.log('Prevented turning south towards north corridor');
-                    targetDir = currentDir; // Don't turn
                 }
                 
                 // Get the heading for target direction
@@ -904,16 +875,24 @@ function setupNoaEngine() {
                 else if (targetDir === 'south') targetHeading = Math.PI;
                 else if (targetDir === 'west') targetHeading = -Math.PI / 2;
                 
-                // Check if there's an exit in the target direction and store target position
+                // Always align to standard exit positions when turning
+                // We know exits are at fixed positions relative to chunk
+                const chunkX = Math.floor(pos[0] / 32);
+                const chunkZ = Math.floor(pos[2] / 32);
                 let targetExit = null;
-                if (targetDir === 'north' && roomInfo.exits.north) {
-                    targetExit = { x: roomInfo.exits.north.x + 0.5, z: pos[2], exit: roomInfo.exits.north };
-                } else if (targetDir === 'east' && roomInfo.exits.east) {
-                    targetExit = { x: pos[0], z: roomInfo.exits.east.z + 0.5, exit: roomInfo.exits.east };
-                } else if (targetDir === 'south' && roomInfo.exits.south) {
-                    targetExit = { x: roomInfo.exits.south.x + 0.5, z: pos[2], exit: roomInfo.exits.south };
-                } else if (targetDir === 'west' && roomInfo.exits.west) {
-                    targetExit = { x: pos[0], z: roomInfo.exits.west.z + 0.5, exit: roomInfo.exits.west };
+                
+                if (targetDir === 'north') {
+                    // North exit is always at x=15 (relative to chunk)
+                    targetExit = { x: chunkX * 32 + 15 + 0.5, z: pos[2] };
+                } else if (targetDir === 'east') {
+                    // East exit is always at z=13 (relative to chunk)
+                    targetExit = { x: pos[0], z: chunkZ * 32 + 13 + 0.5 };
+                } else if (targetDir === 'south') {
+                    // South exit is always at x=15 (relative to chunk)
+                    targetExit = { x: chunkX * 32 + 15 + 0.5, z: pos[2] };
+                } else if (targetDir === 'west') {
+                    // West exit is always at z=17 (relative to chunk)
+                    targetExit = { x: pos[0], z: chunkZ * 32 + 17 + 0.5 };
                 }
                 
                 console.log('Turning:', currentDir, '->', targetDir, 'heading:', targetHeading.toFixed(2));
