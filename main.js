@@ -781,9 +781,17 @@ function setupNoaEngine() {
                         const chunkZ = Math.floor(spawnPos[2] / 32);
                         console.log(`Room should exist at chunk ${chunkX},${chunkZ}: ${roomExists(chunkX, chunkZ, WORLD_SEED)}`);
                     }
+                    
+                    // Create hostile drone entity near player after spawn is finalized
+                    createDrone(true);
                 }, 500);
             }, 1000); // Wait for forced chunk generation
         }, 1000); // Initial wait
+    } else {
+        // Player already has a valid position, create drone immediately
+        setTimeout(() => {
+            createDrone(true);
+        }, 1000); // Small delay to ensure world is ready
     }
     
     noa.entities.setPosition(noa.playerEntity, position);
@@ -820,8 +828,7 @@ function setupNoaEngine() {
         console.log('Player movement speed increased 2x');
     }
     
-    // Create hostile drone entity
-    createDrone();
+    // Drone will be created after player spawn is finalized
     
     
     // Set up world generation with rooms and corridors
@@ -1816,8 +1823,22 @@ function startPeriodicUpdates() {
 }
 
 // Create drone entity
-function createDrone() {
+function createDrone(spawnNearPlayer = true) {
     const scene = noa.rendering.getScene();
+    
+    // Determine spawn position
+    let droneSpawnPos = [0, 10, 0]; // Default position
+    
+    if (spawnNearPlayer && noa.playerEntity) {
+        const playerPos = noa.entities.getPosition(noa.playerEntity);
+        // Spawn drone 10 blocks away from player in a random direction, 5 blocks up
+        const angle = Math.random() * Math.PI * 2;
+        droneSpawnPos = [
+            playerPos[0] + Math.cos(angle) * 10,
+            playerPos[1] + 5,
+            playerPos[2] + Math.sin(angle) * 10
+        ];
+    }
     
     // Create a rectangular box for the drone
     const droneBox = BABYLON.MeshBuilder.CreateBox('drone', {
@@ -1834,7 +1855,7 @@ function createDrone() {
     
     // Create drone entity
     // The last parameter (true) already adds physics component
-    droneEntity = noa.entities.add([0, 10, 0], 1, 1, droneBox, [0, 0, 0], true, false);
+    droneEntity = noa.entities.add(droneSpawnPos, 1, 1, droneBox, [0, 0, 0], true, false);
     
     // Modify existing physics component for flying drone
     const physics = noa.entities.getPhysics(droneEntity);
@@ -1844,7 +1865,6 @@ function createDrone() {
         physics.body.restitution = 0;
     }
     
-    console.log('Drone entity created');
     
     // Start drone AI
     startDroneAI();
