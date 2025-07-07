@@ -19,6 +19,7 @@ let corridorWestID;
 // Game entities
 let droneEntity = null;
 let projectiles = [];
+let currentPlayerHealth = 100; // Track current health during gameplay
 
 // No custom meshes needed - noa only supports full block collision
 
@@ -589,31 +590,23 @@ function updateHealthDisplay(health, maxHealth = 100) {
 
 // Damage player (for testing or future gameplay)
 function damagePlayer(amount) {
-    const state = getPlayerState();
-    if (!state) return;
+    currentPlayerHealth = Math.max(0, currentPlayerHealth - amount);
+    updateHealthDisplay(currentPlayerHealth);
     
-    state.health = Math.max(0, state.health - amount);
-    updateHealthDisplay(state.health);
-    
-    // Save state back to token (this would need proper token update in production)
-    // For now, just update the display
-    console.log('Player damaged:', amount, 'New health:', state.health);
+    console.log('Player damaged:', amount, 'New health:', currentPlayerHealth);
     
     // Check for death
-    if (state.health <= 0) {
+    if (currentPlayerHealth <= 0) {
         handlePlayerDeath();
     }
 }
 
 // Heal player
 function healPlayer(amount) {
-    const state = getPlayerState();
-    if (!state) return;
+    currentPlayerHealth = Math.min(100, currentPlayerHealth + amount);
+    updateHealthDisplay(currentPlayerHealth);
     
-    state.health = Math.min(100, state.health + amount);
-    updateHealthDisplay(state.health);
-    
-    console.log('Player healed:', amount, 'New health:', state.health);
+    console.log('Player healed:', amount, 'New health:', currentPlayerHealth);
 }
 
 
@@ -740,9 +733,11 @@ function setupNoaEngine() {
     
     // Initialize health display
     if (playerState && playerState.health !== undefined) {
-        updateHealthDisplay(playerState.health);
+        currentPlayerHealth = playerState.health;
+        updateHealthDisplay(currentPlayerHealth);
     } else {
-        updateHealthDisplay(100); // Default to full health
+        currentPlayerHealth = 100; // Default to full health
+        updateHealthDisplay(currentPlayerHealth);
     }
     
     // If no saved position or invalid position, we need to find a spawn room
@@ -1783,6 +1778,7 @@ function startPeriodicUpdates() {
         const newState = {
             ...currentState,
             position: [position[0], position[1], position[2]],
+            health: currentPlayerHealth,
             lastUpdate: Date.now()
         };
         
@@ -1874,6 +1870,9 @@ function createDrone(spawnNearPlayer = true) {
 function startDroneAI() {
     let lastFireTime = 0;
     const fireRate = 1000; // Fire every 1 second
+    const shootingRange = 20; // Shooting range in blocks
+    const pursuitAltitude = { min: 10, max: 15 }; // High altitude during pursuit
+    const combatAltitude = 8; // Lower altitude during combat
     
     setInterval(() => {
         if (!droneEntity || !noa.entities.hasComponent(droneEntity, noa.entities.names.position)) return;
@@ -1885,36 +1884,67 @@ function startDroneAI() {
         const dx = playerPos[0] - dronePos[0];
         const dy = playerPos[1] - dronePos[1];
         const dz = playerPos[2] - dronePos[2];
-        const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        const horizontalDistance = Math.sqrt(dx * dx + dz * dz);
+        const totalDistance = Math.sqrt(dx * dx + dy * dy + dz * dz);
         
         // Get drone physics
         const physics = noa.entities.getPhysics(droneEntity);
         if (!physics) return;
         
-        // Follow player if within 2 chunks (64 blocks)
-        if (distance < 64) {
-            // Calculate normalized direction to player
-            const dirX = dx / distance;
-            const dirY = dy / distance;
-            const dirZ = dz / distance;
+        // Always pursue player regardless of distance
+        if (horizontalDistance > shootingRange) {
+            // PURSUIT MODE - fly high and approach player
             
-            // Set drone velocity (75% of player speed)
-            const droneSpeed = 3; // 75% of player's 4 speed
-            physics.body.velocity[0] = dirX * droneSpeed;
-            physics.body.velocity[1] = dirY * droneSpeed + 2; // Stay above player
-            physics.body.velocity[2] = dirZ * droneSpeed;
+            // Calculate target altitude (random between min and max for variety)
+            const targetAltitude = playerPos[1] + pursuitAltitude.min + 
+                                 Math.random() * (pursuitAltitude.max - pursuitAltitude.min);
+            const altitudeDiff = targetAltitude - dronePos[1];
             
-            // Fire projectile if within 1 chunk (32 blocks) and cooldown passed
+            // Calculate horizontal direction to player
+            const horizDir = horizontalDistance > 0 ? 1 / horizontalDistance : 0;
+            const dirX = dx * horizDir;
+            const dirZ = dz * horizDir;
+            
+            // Set drone velocity with faster pursuit speed
+            const pursuitSpeed = 6; // Faster when pursuing
+            physics.body.velocity[0] = dirX * pursuitSpeed;
+            physics.body.velocity[2] = dirZ * pursuitSpeed;
+            
+            // Altitude control - move up/down to maintain pursuit altitude
+            if (Math.abs(altitudeDiff) > 1) {
+                physics.body.velocity[1] = Math.sign(altitudeDiff) * 3;
+            } else {
+                physics.body.velocity[1] = altitudeDiff; // Fine adjustment
+            }
+            
+        } else {
+            // COMBAT MODE - hover around player at lower altitude and shoot
+            
+            // Calculate target position for hovering
+            const hoverRadius = shootingRange * 0.7; // Stay within shooting range
+            const angle = Date.now() * 0.001; // Slowly circle around player
+            
+            const targetX = playerPos[0] + Math.cos(angle) * hoverRadius;
+            const targetZ = playerPos[2] + Math.sin(angle) * hoverRadius;
+            const targetY = playerPos[1] + combatAltitude;
+            
+            // Calculate direction to hover position
+            const hoverDx = targetX - dronePos[0];
+            const hoverDy = targetY - dronePos[1];
+            const hoverDz = targetZ - dronePos[2];
+            
+            // Set drone velocity for hovering
+            const hoverSpeed = 3;
+            physics.body.velocity[0] = hoverDx * 0.5; // Smooth hovering
+            physics.body.velocity[1] = hoverDy * 0.8; // Quick altitude adjustment
+            physics.body.velocity[2] = hoverDz * 0.5;
+            
+            // Fire projectile if cooldown passed
             const currentTime = Date.now();
-            if (distance < 32 && currentTime - lastFireTime > fireRate) {
+            if (currentTime - lastFireTime > fireRate) {
                 fireProjectile(dronePos, playerPos);
                 lastFireTime = currentTime;
             }
-        } else {
-            // Stop moving if too far
-            physics.body.velocity[0] = 0;
-            physics.body.velocity[1] = 0;
-            physics.body.velocity[2] = 0;
         }
     }, 100); // Update 10 times per second
 }
