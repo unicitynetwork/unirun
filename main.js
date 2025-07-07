@@ -682,12 +682,12 @@ function setupNoaEngine() {
     
     noa.entities.setPosition(noa.playerEntity, position);
     
-    // Increase the player's movement speed 4x
+    // Increase the player's movement speed 2x
     const playerMovement = noa.entities.getMovement(noa.playerEntity);
     if (playerMovement) {
-        playerMovement.maxSpeed *= 4; // 4x the max speed
-        playerMovement.moveSpeed *= 4; // 4x the move speed
-        console.log('Player movement speed increased 4x');
+        playerMovement.maxSpeed *= 2; // 2x the max speed
+        playerMovement.moveSpeed *= 2; // 2x the move speed
+        console.log('Player movement speed increased 2x');
     }
     
     
