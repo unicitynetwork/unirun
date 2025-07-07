@@ -107,21 +107,21 @@ function getRoomDimensions(x, z, seed) {
 function eastExitExists(x, z, seed) {
     // Use a more unique seed to avoid patterns
     const rng = seededRandom(seed + '_exit_east_' + (x * 1000) + '_' + (z * 1000));
-    const result = rng() < 0.6; // 60% chance
+    const result = rng() < 0.8; // 80% chance - more frequent
     return result;
 }
 
 function northExitExists(x, z, seed) {
     // Use a more unique seed to avoid patterns
     const rng = seededRandom(seed + '_exit_north_' + (x * 1000) + '_' + (z * 1000));
-    const result = rng() < 0.6; // 60% chance
+    const result = rng() < 0.3; // 30% chance - more rare
     return result;
 }
 
 function westExitExists(x, z, seed) {
     // Use a more unique seed to avoid patterns
     const rng = seededRandom(seed + '_exit_west_' + (x * 1000) + '_' + (z * 1000));
-    const result = rng() < 0.6; // 60% chance
+    const result = rng() < 0.8; // 80% chance - more frequent
     return result;
 }
 
