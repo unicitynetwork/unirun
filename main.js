@@ -823,9 +823,24 @@ function setupNoaEngine() {
                 // Check if there's a red (east) corridor at y=0
                 const hasEastCorridor = data.get(x, 0, z) === corridorEastID;
                 
-                // If both exist at the same x,z position, we have an intersection
+                // Check if there's a yellow (west) corridor at y=0
+                const hasWestCorridor = data.get(x, 0, z) === corridorWestID;
+                
+                // If blue intersects with red, we have a red/blue intersection
                 if (hasNorthCorridor && hasEastCorridor) {
                     intersections.push({
+                        type: 'red-blue',
+                        worldX: chunkX * chunkSize + x,
+                        worldZ: chunkZ * chunkSize + z,
+                        localX: x,
+                        localZ: z
+                    });
+                }
+                
+                // If blue intersects with yellow, we have a yellow/blue intersection
+                if (hasNorthCorridor && hasWestCorridor) {
+                    intersections.push({
+                        type: 'yellow-blue',
                         worldX: chunkX * chunkSize + x,
                         worldZ: chunkZ * chunkSize + z,
                         localX: x,
@@ -836,36 +851,60 @@ function setupNoaEngine() {
         }
         
         if (intersections.length > 0) {
-            console.log(`[Chunk ${chunkX},${chunkZ}] Found ${intersections.length} red/blue corridor intersection(s):`);
+            console.log(`[Chunk ${chunkX},${chunkZ}] Found ${intersections.length} corridor intersection(s):`);
             intersections.forEach(inter => {
-                console.log(`  - Intersection at world pos (${inter.worldX}, ${inter.worldZ}), local pos (${inter.localX}, ${inter.localZ})`);
+                console.log(`  - ${inter.type} intersection at world pos (${inter.worldX}, ${inter.worldZ}), local pos (${inter.localX}, ${inter.localZ})`);
             });
             
-            // Enforce walls for red corridors at intersections
+            // Enforce walls for corridors at intersections
             // This happens after all other generation to ensure walls are placed correctly
             intersections.forEach(inter => {
                 const x = inter.localX;
                 const z = inter.localZ;
                 
-                // For red (east) corridors at intersections, place walls to the north and south
-                // Red corridors run east-west at z=12-14 (3 blocks wide)
-                
-                // Check if this position is part of an east corridor
-                if (z >= 12 && z <= 14) {
-                    // Place wall to the north (at z-1 if z=12)
-                    if (z === 12 && z > 0) {
-                        // Wall at z=11 for y=1 and y=2
-                        data.set(x, 1, z - 1, dirtID);
-                        data.set(x, 2, z - 1, dirtID);
-                        console.log(`  - Placed north wall at local (${x}, 1-2, ${z-1})`);
-                    }
+                if (inter.type === 'red-blue') {
+                    // For red (east) corridors at intersections, place walls to the north and south
+                    // Red corridors run east-west at z=12-14 (3 blocks wide)
                     
-                    // Place wall to the south (at z+1 if z=14)
-                    if (z === 14 && z < chunkSize - 1) {
-                        // Wall at z=15 for y=1 and y=2
-                        data.set(x, 1, z + 1, dirtID);
-                        data.set(x, 2, z + 1, dirtID);
-                        console.log(`  - Placed south wall at local (${x}, 1-2, ${z+1})`);
+                    // Check if this position is part of an east corridor
+                    if (z >= 12 && z <= 14) {
+                        // Place wall to the north (at z-1 if z=12)
+                        if (z === 12 && z > 0) {
+                            // Wall at z=11 for y=1 and y=2
+                            data.set(x, 1, z - 1, dirtID);
+                            data.set(x, 2, z - 1, dirtID);
+                            console.log(`  - Placed north wall for red corridor at local (${x}, 1-2, ${z-1})`);
+                        }
+                        
+                        // Place wall to the south (at z+1 if z=14)
+                        if (z === 14 && z < chunkSize - 1) {
+                            // Wall at z=15 for y=1 and y=2
+                            data.set(x, 1, z + 1, dirtID);
+                            data.set(x, 2, z + 1, dirtID);
+                            console.log(`  - Placed south wall for red corridor at local (${x}, 1-2, ${z+1})`);
+                        }
+                    }
+                } else if (inter.type === 'yellow-blue') {
+                    // For yellow (west) corridors at intersections, place walls to the north and south
+                    // Yellow corridors run east-west at z=16-18 (3 blocks wide)
+                    
+                    // Check if this position is part of a west corridor
+                    if (z >= 16 && z <= 18) {
+                        // Place wall to the north (at z-1 if z=16)
+                        if (z === 16 && z > 0) {
+                            // Wall at z=15 for y=1 and y=2
+                            data.set(x, 1, z - 1, dirtID);
+                            data.set(x, 2, z - 1, dirtID);
+                            console.log(`  - Placed north wall for yellow corridor at local (${x}, 1-2, ${z-1})`);
+                        }
+                        
+                        // Place wall to the south (at z+1 if z=18)
+                        if (z === 18 && z < chunkSize - 1) {
+                            // Wall at z=19 for y=1 and y=2
+                            data.set(x, 1, z + 1, dirtID);
+                            data.set(x, 2, z + 1, dirtID);
+                            console.log(`  - Placed south wall for yellow corridor at local (${x}, 1-2, ${z+1})`);
+                        }
                     }
                 }
             });
