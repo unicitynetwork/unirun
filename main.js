@@ -590,6 +590,9 @@ function updateHealthDisplay(health, maxHealth = 100) {
 
 // Damage player (for testing or future gameplay)
 function damagePlayer(amount) {
+    // Don't damage if already dead
+    if (currentPlayerHealth <= 0) return;
+    
     currentPlayerHealth = Math.max(0, currentPlayerHealth - amount);
     updateHealthDisplay(currentPlayerHealth);
     
@@ -755,7 +758,7 @@ function setupNoaEngine() {
             
             setTimeout(() => {
                 console.log('Finding spawn room...');
-                const spawnPos = findSpawnRoom(WORLD_SEED);
+                const spawnPos = calculateInitialSpawnPoint(WORLD_SEED);
                 noa.entities.setPosition(noa.playerEntity, spawnPos);
                 
                 // Verify spawn
@@ -2090,24 +2093,34 @@ setInterval(() => {
 
 // Handle player death
 function handlePlayerDeath() {
-    const state = getPlayerState();
-    if (!state || state.health > 0) return;
-    
     console.log('Player died! Respawning...');
     
     // Reset health
-    state.health = 100;
-    state.score = 0; // Lose all loot/score
-    updateHealthDisplay(state.health);
+    currentPlayerHealth = 100;
+    updateHealthDisplay(currentPlayerHealth);
     
     // Find spawn position
-    const spawnPos = findSpawnRoom(WORLD_SEED);
+    const spawnPos = calculateInitialSpawnPoint(WORLD_SEED);
     noa.entities.setPosition(noa.playerEntity, spawnPos);
     
     // Respawn drone at a distance
     if (droneEntity && noa.entities.hasComponent(droneEntity, noa.entities.names.position)) {
-        noa.entities.setPosition(droneEntity, [spawnPos[0] + 20, spawnPos[1] + 10, spawnPos[2] + 20]);
+        const angle = Math.random() * Math.PI * 2;
+        const distance = 30; // Spawn far away
+        noa.entities.setPosition(droneEntity, [
+            spawnPos[0] + Math.cos(angle) * distance,
+            spawnPos[1] + 15,
+            spawnPos[2] + Math.sin(angle) * distance
+        ]);
     }
     
-    console.log('Player respawned with full health, lost all loot');
+    // Clear all projectiles
+    projectiles.forEach(proj => {
+        if (noa.entities.hasComponent(proj.entity, noa.entities.names.position)) {
+            noa.entities.deleteEntity(proj.entity);
+        }
+    });
+    projectiles = [];
+    
+    console.log('Player respawned with full health');
 }
