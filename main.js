@@ -647,7 +647,7 @@ function setupNoaEngine() {
     });
     
     // Set up 3rd person camera - looking from behind and above
-    noa.camera.zoomDistance = 10;  // Increased distance for better view
+    noa.camera.zoomDistance = 20;  // Doubled distance for better view
     noa.camera.pitch = 0.333;      // Positive pitch looks up (about 19 degrees)
     
     // Disable camera collision avoidance - always stay at fixed distance
