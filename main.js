@@ -590,6 +590,40 @@ function setupNoaEngine() {
                             voxelID = corridorEastID; // East corridor floor
                         } else if (level[i][k] === 'corridor_west') {
                             voxelID = corridorWestID; // West corridor floor
+                        } else if (level[i][k] === 'corridor_north') {
+                            // North corridor at ground level - check for intersections
+                            // If we're at an east/west corridor location, preserve that floor
+                            if (k >= 12 && k <= 14 && i >= 0 && i <= 31) {
+                                // Check if there's an east corridor at this chunk
+                                let hasEastCorridor = false;
+                                for (let checkX = 0; checkX < 32; checkX++) {
+                                    if (level[checkX][k] === 'corridor_east') {
+                                        hasEastCorridor = true;
+                                        break;
+                                    }
+                                }
+                                if (hasEastCorridor) {
+                                    voxelID = corridorEastID; // Preserve east corridor floor
+                                } else {
+                                    voxelID = dirtID; // No corridor here, use dirt
+                                }
+                            } else if (k >= 16 && k <= 18 && i >= 0 && i <= 31) {
+                                // Check if there's a west corridor at this chunk
+                                let hasWestCorridor = false;
+                                for (let checkX = 0; checkX < 32; checkX++) {
+                                    if (level[checkX][k] === 'corridor_west') {
+                                        hasWestCorridor = true;
+                                        break;
+                                    }
+                                }
+                                if (hasWestCorridor) {
+                                    voxelID = corridorWestID; // Preserve west corridor floor
+                                } else {
+                                    voxelID = dirtID; // No corridor here, use dirt
+                                }
+                            } else {
+                                voxelID = dirtID; // Ground under north corridor (not at intersection)
+                            }
                         } else {
                             voxelID = dirtID; // Solid ground under walls
                         }
