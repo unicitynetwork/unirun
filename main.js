@@ -1858,7 +1858,12 @@ function createDrone(spawnNearPlayer = true) {
     if (physics && physics.body) {
         physics.body.gravityMultiplier = 0; // No gravity for flying drone
         physics.body.friction = 0;
+        physics.body.airDrag = 0; // No air resistance
+        physics.body.fluidDrag = 0; // No fluid drag
         physics.body.restitution = 0;
+        // Set the body to be always active
+        physics.body.sleepSpeedLimit = 0;
+        physics.body.sleepTimeLimit = 0;
     }
     
     
@@ -1906,16 +1911,24 @@ function startDroneAI() {
             const dirZ = dz * horizDir;
             
             // Set drone velocity with faster pursuit speed
-            const pursuitSpeed = 6; // Faster when pursuing
+            const pursuitSpeed = 8; // Faster when pursuing
+            
+            // Apply forces instead of setting velocity directly
+            const forceMult = 10; // Force multiplier
+            physics.body.applyForce([dirX * pursuitSpeed * forceMult, 0, dirZ * pursuitSpeed * forceMult]);
+            
+            // Also set velocity directly as backup
             physics.body.velocity[0] = dirX * pursuitSpeed;
             physics.body.velocity[2] = dirZ * pursuitSpeed;
             
             // Altitude control - move up/down to maintain pursuit altitude
             if (Math.abs(altitudeDiff) > 1) {
                 physics.body.velocity[1] = Math.sign(altitudeDiff) * 3;
+                physics.body.applyForce([0, Math.sign(altitudeDiff) * 30, 0]);
             } else {
                 physics.body.velocity[1] = altitudeDiff; // Fine adjustment
             }
+            
             
         } else {
             // COMBAT MODE - hover around player at lower altitude and shoot
@@ -1935,6 +1948,11 @@ function startDroneAI() {
             
             // Set drone velocity for hovering
             const hoverSpeed = 3;
+            
+            // Apply forces for smoother movement
+            physics.body.applyForce([hoverDx * 5, hoverDy * 8, hoverDz * 5]);
+            
+            // Also set velocity directly
             physics.body.velocity[0] = hoverDx * 0.5; // Smooth hovering
             physics.body.velocity[1] = hoverDy * 0.8; // Quick altitude adjustment
             physics.body.velocity[2] = hoverDz * 0.5;
