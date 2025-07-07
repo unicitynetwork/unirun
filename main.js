@@ -802,16 +802,16 @@ function setupNoaEngine() {
                 else if (targetDir === 'south') targetHeading = Math.PI;
                 else if (targetDir === 'west') targetHeading = -Math.PI / 2;
                 
-                // Check if there's an exit in the target direction and align to it
-                let targetPosition = null;
+                // Check if there's an exit in the target direction and store target position
+                let targetExit = null;
                 if (targetDir === 'north' && roomInfo.exits.north) {
-                    targetPosition = [roomInfo.exits.north.x + 0.5, pos[1], pos[2]];
+                    targetExit = { x: roomInfo.exits.north.x + 0.5, z: pos[2], exit: roomInfo.exits.north };
                 } else if (targetDir === 'east' && roomInfo.exits.east) {
-                    targetPosition = [pos[0], pos[1], roomInfo.exits.east.z + 0.5];
+                    targetExit = { x: pos[0], z: roomInfo.exits.east.z + 0.5, exit: roomInfo.exits.east };
                 } else if (targetDir === 'south' && roomInfo.exits.south) {
-                    targetPosition = [roomInfo.exits.south.x + 0.5, pos[1], pos[2]];
+                    targetExit = { x: roomInfo.exits.south.x + 0.5, z: pos[2], exit: roomInfo.exits.south };
                 } else if (targetDir === 'west' && roomInfo.exits.west) {
-                    targetPosition = [pos[0], pos[1], roomInfo.exits.west.z + 0.5];
+                    targetExit = { x: pos[0], z: roomInfo.exits.west.z + 0.5, exit: roomInfo.exits.west };
                 }
                 
                 console.log('Turning:', currentDir, '->', targetDir, 'heading:', targetHeading.toFixed(2));
@@ -820,11 +820,9 @@ function setupNoaEngine() {
                 movement.heading = targetHeading;
                 noa.camera.heading = targetHeading;
                 
-                // If there's an exit in that direction, align player to it
-                if (targetPosition) {
-                    noa.entities.setPosition(noa.playerEntity, targetPosition);
-                    console.log('Aligned to exit at', targetPosition);
-                }
+                // Store the target exit info for continuous strafing
+                noa._targetExit = targetExit;
+                noa._targetDir = targetDir;
                 
                 // Disable strafe
                 noa.inputs.state.left = false;
@@ -832,6 +830,59 @@ function setupNoaEngine() {
             }
         } else if (inCorridor) {
             // In corridors: strafe works normally, no turning needed
+            // Clear any target exit when entering corridor
+            noa._targetExit = null;
+            noa._targetDir = null;
+        }
+        
+        // Handle continuous auto-strafing towards exit
+        if (inRoom && noa._targetExit) {
+            const target = noa._targetExit;
+            const strafeSpeed = 0.3; // 2x faster than normal walking
+            let needsStrafe = false;
+            let strafeDir = [0, 0, 0];
+            
+            // Calculate strafe direction based on target direction
+            if (noa._targetDir === 'north' || noa._targetDir === 'south') {
+                // Need to align X position
+                const xDiff = target.x - pos[0];
+                if (Math.abs(xDiff) > 0.1) {
+                    needsStrafe = true;
+                    strafeDir[0] = xDiff > 0 ? strafeSpeed : -strafeSpeed;
+                }
+            } else if (noa._targetDir === 'east' || noa._targetDir === 'west') {
+                // Need to align Z position
+                const zDiff = target.z - pos[2];
+                if (Math.abs(zDiff) > 0.1) {
+                    needsStrafe = true;
+                    strafeDir[2] = zDiff > 0 ? strafeSpeed : -strafeSpeed;
+                }
+            }
+            
+            // Apply strafe movement if needed
+            if (needsStrafe) {
+                const physics = noa.entities.getPhysics(noa.playerEntity);
+                if (physics && physics.body) {
+                    // Apply force for strafe movement
+                    const strafeForce = 60; // Strong force for 2x speed
+                    physics.body.applyForce([
+                        strafeDir[0] * strafeForce,
+                        0,
+                        strafeDir[2] * strafeForce
+                    ]);
+                    
+                    // Also maintain some base velocity to push through walls
+                    physics.body.velocity[0] += strafeDir[0] * 0.5;
+                    physics.body.velocity[2] += strafeDir[2] * 0.5;
+                    
+                    console.log('Auto-strafing towards exit:', noa._targetDir);
+                }
+            } else {
+                // Target reached, clear it
+                noa._targetExit = null;
+                noa._targetDir = null;
+                console.log('Reached exit alignment');
+            }
         }
     });
     
