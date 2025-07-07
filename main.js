@@ -630,7 +630,7 @@ function setupNoaEngine() {
             targetHeading = Math.PI / 2;
             corridorType = 'East';
         } else if (blockBelow === corridorNorthID) {
-            // North corridor - face north (+Z)
+            // North corridor - always face north (+Z)
             targetHeading = 0;
             corridorType = 'North';
         } else if (blockBelow === corridorWestID) {
@@ -646,7 +646,7 @@ function setupNoaEngine() {
             // Also update camera heading to prevent mouse from overriding
             noa.camera.heading = targetHeading;
         }
-    }, 1000); // Every second
+    }, 100); // Check every 100ms for faster correction
     
     // Add render callback for continuous movement and chunk processing
     noa.on('beforeRender', () => {
@@ -657,12 +657,34 @@ function setupNoaEngine() {
         const movement = noa.entities.getMovement(noa.playerEntity);
         if (!movement) return;
         
+        
         // Always run forward at 2x speed
         movement.running = true;
         noa.inputs.state.forward = true;
         
-        // Context-sensitive A/D controls
+        // Get current position
         const pos = noa.entities.getPosition(noa.playerEntity);
+        
+        // Check if in north corridor and prevent southward facing
+        const blockBelowCheck = noa.world.getBlockID(
+            Math.floor(pos[0]), 
+            Math.floor(pos[1] - 1), 
+            Math.floor(pos[2])
+        );
+        
+        if (blockBelowCheck === corridorNorthID) {
+            // In north corridor - check heading
+            let currentHeading = movement.heading % (2 * Math.PI);
+            if (currentHeading < 0) currentHeading += 2 * Math.PI;
+            
+            // If facing anywhere near south (between 90° and 270°), snap to north
+            if (currentHeading > Math.PI * 0.5 && currentHeading < Math.PI * 1.5) {
+                movement.heading = 0; // Force north
+                noa.camera.heading = 0;
+            }
+        }
+        
+        // Context-sensitive A/D controls
         const blockBelow = noa.world.getBlockID(
             Math.floor(pos[0]), 
             Math.floor(pos[1] - 1), 
@@ -702,20 +724,35 @@ function setupNoaEngine() {
                 if (noa.inputs.state.right) {
                     // Turn right (clockwise)
                     if (currentDir === 'north' && roomInfo.exits.east) targetExit = roomInfo.exits.east;
-                    else if (currentDir === 'east' && roomInfo.exits.south) targetExit = roomInfo.exits.south;
+                    else if (currentDir === 'east' && roomInfo.exits.south) {
+                        // Check if south exit leads to a north corridor (forbidden)
+                        if (roomInfo.exits.south && noa.world.getBlockID(15, 0, roomInfo.exits.south.z - 1) !== corridorNorthID) {
+                            targetExit = roomInfo.exits.south;
+                        }
+                    }
                     else if (currentDir === 'south' && roomInfo.exits.west) targetExit = roomInfo.exits.west;
                     else if (currentDir === 'west' && roomInfo.exits.north) targetExit = roomInfo.exits.north;
                 } else if (noa.inputs.state.left) {
                     // Turn left (counter-clockwise)
                     if (currentDir === 'north' && roomInfo.exits.west) targetExit = roomInfo.exits.west;
-                    else if (currentDir === 'west' && roomInfo.exits.south) targetExit = roomInfo.exits.south;
+                    else if (currentDir === 'west' && roomInfo.exits.south) {
+                        // Check if south exit leads to a north corridor (forbidden)
+                        if (roomInfo.exits.south && noa.world.getBlockID(15, 0, roomInfo.exits.south.z - 1) !== corridorNorthID) {
+                            targetExit = roomInfo.exits.south;
+                        }
+                    }
                     else if (currentDir === 'south' && roomInfo.exits.east) targetExit = roomInfo.exits.east;
                     else if (currentDir === 'east' && roomInfo.exits.north) targetExit = roomInfo.exits.north;
                 }
                 
                 // If no exit in desired direction, check for exit behind
                 if (!targetExit) {
-                    if (currentDir === 'north' && roomInfo.exits.south) targetExit = roomInfo.exits.south;
+                    if (currentDir === 'north' && roomInfo.exits.south) {
+                        // Check if south exit leads to a north corridor (forbidden)
+                        if (noa.world.getBlockID(15, 0, roomInfo.exits.south.z - 1) !== corridorNorthID) {
+                            targetExit = roomInfo.exits.south;
+                        }
+                    }
                     else if (currentDir === 'south' && roomInfo.exits.north) targetExit = roomInfo.exits.north;
                     else if (currentDir === 'east' && roomInfo.exits.west) targetExit = roomInfo.exits.west;
                     else if (currentDir === 'west' && roomInfo.exits.east) targetExit = roomInfo.exits.east;
@@ -759,7 +796,17 @@ function setupNoaEngine() {
     noa.inputs.bind('left', 'A', 'a');
     noa.inputs.bind('right', 'D', 'd');
     
-    console.log('Controls configured: Mouse disabled, W/S disabled, A/D for strafe/turn');
+    // Configure jump settings to prevent flying and limit jump height
+    const movement = noa.entities.getMovement(noa.playerEntity);
+    movement.airJumps = 0;  // No jumping while in air - prevents double jumping/flying
+    
+    // Configure jump height to 0.9 blocks
+    // With gravity of ~10, we need initial velocity of ~4.2 for 0.9 block height
+    movement.jumpImpulse = 4.2;  // Initial jump velocity (was probably ~10 by default)
+    movement.jumpForce = 0;      // No sustained upward force during jump
+    movement.jumpTime = 100;     // Short jump time since we're using impulse only
+    
+    console.log('Controls configured: Mouse disabled, W/S disabled, A/D for strafe/turn, Limited jump (0.9 blocks)');
     
     // Force immediate chunk generation
     forceChunkGeneration();
