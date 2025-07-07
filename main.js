@@ -813,6 +813,64 @@ function setupNoaEngine() {
             }
         }
         
+        // Check for corridor intersections after chunk generation
+        const intersections = [];
+        for (let x = 0; x < chunkSize; x++) {
+            for (let z = 0; z < chunkSize; z++) {
+                // Check if there's a blue (north) corridor at y=3
+                const hasNorthCorridor = data.get(x, 3, z) === corridorNorthID;
+                
+                // Check if there's a red (east) corridor at y=0
+                const hasEastCorridor = data.get(x, 0, z) === corridorEastID;
+                
+                // If both exist at the same x,z position, we have an intersection
+                if (hasNorthCorridor && hasEastCorridor) {
+                    intersections.push({
+                        worldX: chunkX * chunkSize + x,
+                        worldZ: chunkZ * chunkSize + z,
+                        localX: x,
+                        localZ: z
+                    });
+                }
+            }
+        }
+        
+        if (intersections.length > 0) {
+            console.log(`[Chunk ${chunkX},${chunkZ}] Found ${intersections.length} red/blue corridor intersection(s):`);
+            intersections.forEach(inter => {
+                console.log(`  - Intersection at world pos (${inter.worldX}, ${inter.worldZ}), local pos (${inter.localX}, ${inter.localZ})`);
+            });
+            
+            // Enforce walls for red corridors at intersections
+            // This happens after all other generation to ensure walls are placed correctly
+            intersections.forEach(inter => {
+                const x = inter.localX;
+                const z = inter.localZ;
+                
+                // For red (east) corridors at intersections, place walls to the north and south
+                // Red corridors run east-west at z=12-14 (3 blocks wide)
+                
+                // Check if this position is part of an east corridor
+                if (z >= 12 && z <= 14) {
+                    // Place wall to the north (at z-1 if z=12)
+                    if (z === 12 && z > 0) {
+                        // Wall at z=11 for y=1 and y=2
+                        data.set(x, 1, z - 1, dirtID);
+                        data.set(x, 2, z - 1, dirtID);
+                        console.log(`  - Placed north wall at local (${x}, 1-2, ${z-1})`);
+                    }
+                    
+                    // Place wall to the south (at z+1 if z=14)
+                    if (z === 14 && z < chunkSize - 1) {
+                        // Wall at z=15 for y=1 and y=2
+                        data.set(x, 1, z + 1, dirtID);
+                        data.set(x, 2, z + 1, dirtID);
+                        console.log(`  - Placed south wall at local (${x}, 1-2, ${z+1})`);
+                    }
+                }
+            });
+        }
+        
         // tell noa the chunk's terrain data is now set
         noa.world.setChunkData(id, data);
     });
