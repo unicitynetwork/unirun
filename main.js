@@ -637,13 +637,35 @@ function setupNoaEngine() {
             // West corridor - face west (-X)
             targetHeading = -Math.PI / 2;
             corridorType = 'West';
+        } else if (blockBelow === roomFloorID) {
+            // In room - snap to nearest cardinal direction
+            const currentHeading = movement.heading;
+            let normalizedHeading = currentHeading % (2 * Math.PI);
+            if (normalizedHeading < 0) normalizedHeading += 2 * Math.PI;
+            
+            // Snap to nearest cardinal direction
+            if (normalizedHeading < Math.PI * 0.25 || normalizedHeading >= Math.PI * 1.75) {
+                targetHeading = 0; // North
+            } else if (normalizedHeading >= Math.PI * 0.25 && normalizedHeading < Math.PI * 0.75) {
+                targetHeading = Math.PI / 2; // East
+            } else if (normalizedHeading >= Math.PI * 0.75 && normalizedHeading < Math.PI * 1.25) {
+                targetHeading = Math.PI; // South
+            } else {
+                targetHeading = -Math.PI / 2; // West
+            }
+            
+            // Only snap if we're close enough (within 5 degrees)
+            const diff = Math.abs(normalizedHeading - (targetHeading < 0 ? targetHeading + 2 * Math.PI : targetHeading));
+            if (diff < Math.PI / 36 || diff > 2 * Math.PI - Math.PI / 36) {
+                // Already close to cardinal, apply snap
+            } else {
+                targetHeading = null; // Don't snap if not close
+            }
         }
         
-        // Apply heading if in a corridor - force update every time
+        // Apply heading if we have a target
         if (targetHeading !== null) {
             movement.heading = targetHeading;
-            
-            // Also update camera heading to prevent mouse from overriding
             noa.camera.heading = targetHeading;
         }
     }, 100); // Check every 100ms for faster correction
@@ -727,36 +749,82 @@ function setupNoaEngine() {
                     currentDir = 'west';
                 }
                 
-                // Simple 90-degree turns when pressing left/right in rooms
-                let newHeading = currentHeading;
+                // First, snap current heading to nearest cardinal direction
+                const cardinalDirections = [
+                    { dir: 'north', heading: 0 },
+                    { dir: 'east', heading: Math.PI / 2 },
+                    { dir: 'south', heading: Math.PI },
+                    { dir: 'west', heading: -Math.PI / 2 }
+                ];
                 
-                if (noa.inputs.state.right) {
-                    // Turn right (clockwise) - add 90 degrees
-                    newHeading = currentHeading + Math.PI / 2;
-                } else if (noa.inputs.state.left) {
-                    // Turn left (counter-clockwise) - subtract 90 degrees
-                    newHeading = currentHeading - Math.PI / 2;
-                }
+                // Find closest cardinal direction to current heading
+                let closestCardinal = cardinalDirections[0];
+                let minDiff = Math.PI * 2;
                 
-                // Normalize heading to 0-2π range
-                newHeading = newHeading % (2 * Math.PI);
-                if (newHeading < 0) newHeading += 2 * Math.PI;
-                
-                // Check if we would be facing south in a north corridor (forbidden)
-                const facingSouth = (newHeading > Math.PI * 0.75 && newHeading < Math.PI * 1.25);
-                if (facingSouth) {
-                    // Check if there's a south exit that leads to a north corridor
-                    if (roomInfo.exits.south && noa.world.getBlockID(15, 0, roomInfo.exits.south.z - 1) === corridorNorthID) {
-                        console.log('Prevented turning south towards north corridor');
-                        newHeading = currentHeading; // Don't turn
+                for (const cardinal of cardinalDirections) {
+                    let diff = Math.abs(normalizedHeading - (cardinal.heading < 0 ? cardinal.heading + 2 * Math.PI : cardinal.heading));
+                    if (diff > Math.PI) diff = 2 * Math.PI - diff;
+                    if (diff < minDiff) {
+                        minDiff = diff;
+                        closestCardinal = cardinal;
                     }
                 }
                 
-                console.log('Turning from', currentHeading.toFixed(2), 'to', newHeading.toFixed(2));
+                currentDir = closestCardinal.dir;
+                let snappedHeading = closestCardinal.heading;
+                
+                // Calculate new direction after turn
+                let targetDir = currentDir;
+                if (noa.inputs.state.right) {
+                    // Turn right (clockwise)
+                    if (currentDir === 'north') targetDir = 'east';
+                    else if (currentDir === 'east') targetDir = 'south';
+                    else if (currentDir === 'south') targetDir = 'west';
+                    else if (currentDir === 'west') targetDir = 'north';
+                } else if (noa.inputs.state.left) {
+                    // Turn left (counter-clockwise)
+                    if (currentDir === 'north') targetDir = 'west';
+                    else if (currentDir === 'west') targetDir = 'south';
+                    else if (currentDir === 'south') targetDir = 'east';
+                    else if (currentDir === 'east') targetDir = 'north';
+                }
+                
+                // Check if target direction is valid (not south towards north corridor)
+                if (targetDir === 'south' && roomInfo.exits.south && 
+                    noa.world.getBlockID(15, 0, roomInfo.exits.south.z - 1) === corridorNorthID) {
+                    console.log('Prevented turning south towards north corridor');
+                    targetDir = currentDir; // Don't turn
+                }
+                
+                // Get the heading for target direction
+                let targetHeading = 0;
+                if (targetDir === 'east') targetHeading = Math.PI / 2;
+                else if (targetDir === 'south') targetHeading = Math.PI;
+                else if (targetDir === 'west') targetHeading = -Math.PI / 2;
+                
+                // Check if there's an exit in the target direction and align to it
+                let targetPosition = null;
+                if (targetDir === 'north' && roomInfo.exits.north) {
+                    targetPosition = [roomInfo.exits.north.x + 0.5, pos[1], pos[2]];
+                } else if (targetDir === 'east' && roomInfo.exits.east) {
+                    targetPosition = [pos[0], pos[1], roomInfo.exits.east.z + 0.5];
+                } else if (targetDir === 'south' && roomInfo.exits.south) {
+                    targetPosition = [roomInfo.exits.south.x + 0.5, pos[1], pos[2]];
+                } else if (targetDir === 'west' && roomInfo.exits.west) {
+                    targetPosition = [pos[0], pos[1], roomInfo.exits.west.z + 0.5];
+                }
+                
+                console.log('Turning:', currentDir, '->', targetDir, 'heading:', targetHeading.toFixed(2));
                 
                 // Apply the turn
-                movement.heading = newHeading;
-                noa.camera.heading = newHeading;
+                movement.heading = targetHeading;
+                noa.camera.heading = targetHeading;
+                
+                // If there's an exit in that direction, align player to it
+                if (targetPosition) {
+                    noa.entities.setPosition(noa.playerEntity, targetPosition);
+                    console.log('Aligned to exit at', targetPosition);
+                }
                 
                 // Disable strafe
                 noa.inputs.state.left = false;
