@@ -16,6 +16,10 @@ let corridorEastID;
 let corridorNorthID;
 let corridorWestID;
 
+// Game entities
+let droneEntity = null;
+let projectiles = [];
+
 // No custom meshes needed - noa only supports full block collision
 
 // Initialize the game when DOM is loaded
@@ -518,6 +522,59 @@ function getPlayerState() {
     }
 }
 
+// Update health display
+function updateHealthDisplay(health, maxHealth = 100) {
+    const healthText = document.getElementById('healthText');
+    const healthBarFill = document.getElementById('healthBarFill');
+    
+    if (healthText) {
+        healthText.textContent = `Health: ${health}/${maxHealth}`;
+    }
+    
+    if (healthBarFill) {
+        const percentage = Math.max(0, Math.min(100, (health / maxHealth) * 100));
+        healthBarFill.style.width = percentage + '%';
+        
+        // Change color based on health percentage
+        if (percentage > 50) {
+            healthBarFill.style.background = 'linear-gradient(to right, #33ff33, #66ff66)';
+        } else if (percentage > 25) {
+            healthBarFill.style.background = 'linear-gradient(to right, #ffaa33, #ffcc66)';
+        } else {
+            healthBarFill.style.background = 'linear-gradient(to right, #ff3333, #ff6666)';
+        }
+    }
+}
+
+// Damage player (for testing or future gameplay)
+function damagePlayer(amount) {
+    const state = getPlayerState();
+    if (!state) return;
+    
+    state.health = Math.max(0, state.health - amount);
+    updateHealthDisplay(state.health);
+    
+    // Save state back to token (this would need proper token update in production)
+    // For now, just update the display
+    console.log('Player damaged:', amount, 'New health:', state.health);
+    
+    // Check for death
+    if (state.health <= 0) {
+        handlePlayerDeath();
+    }
+}
+
+// Heal player
+function healPlayer(amount) {
+    const state = getPlayerState();
+    if (!state) return;
+    
+    state.health = Math.min(100, state.health + amount);
+    updateHealthDisplay(state.health);
+    
+    console.log('Player healed:', amount, 'New health:', state.health);
+}
+
 
 // Set up noa engine
 function setupNoaEngine() {
@@ -640,6 +697,13 @@ function setupNoaEngine() {
     let position = playerState?.position || null;
     console.log('Position from state:', position);
     
+    // Initialize health display
+    if (playerState && playerState.health !== undefined) {
+        updateHealthDisplay(playerState.health);
+    } else {
+        updateHealthDisplay(100); // Default to full health
+    }
+    
     // If no saved position or invalid position, we need to find a spawn room
     // But we'll do this after chunks are generated
     if (!position || position[1] < -10) {
@@ -714,6 +778,9 @@ function setupNoaEngine() {
         playerMovement.moveSpeed *= 2; // 2x the move speed
         console.log('Player movement speed increased 2x');
     }
+    
+    // Create hostile drone entity
+    createDrone();
     
     
     // Set up world generation with rooms and corridors
@@ -1705,4 +1772,214 @@ function startPeriodicUpdates() {
         
         console.log('State updated and saved');
     }, 10000); // Every 10 seconds
+}
+
+// Create drone entity
+function createDrone() {
+    const scene = noa.rendering.getScene();
+    
+    // Create a rectangular box for the drone
+    const droneBox = BABYLON.MeshBuilder.CreateBox('drone', {
+        width: 1.2,
+        height: 0.6,
+        depth: 0.8
+    }, scene);
+    
+    // Create dark gray material for drone
+    const droneMat = noa.rendering.makeStandardMaterial('droneMat');
+    droneMat.diffuseColor = new BABYLON.Color3(0.3, 0.3, 0.3); // Dark gray
+    droneMat.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
+    droneBox.material = droneMat;
+    
+    // Create drone entity
+    // The last parameter (true) already adds physics component
+    droneEntity = noa.entities.add([0, 10, 0], 1, 1, droneBox, [0, 0, 0], true, false);
+    
+    // Modify existing physics component for flying drone
+    const physics = noa.entities.getPhysics(droneEntity);
+    if (physics && physics.body) {
+        physics.body.gravityMultiplier = 0; // No gravity for flying drone
+        physics.body.friction = 0;
+        physics.body.restitution = 0;
+    }
+    
+    console.log('Drone entity created');
+    
+    // Start drone AI
+    startDroneAI();
+}
+
+// Drone AI behavior
+function startDroneAI() {
+    let lastFireTime = 0;
+    const fireRate = 1000; // Fire every 1 second
+    
+    setInterval(() => {
+        if (!droneEntity || !noa.entities.hasComponent(droneEntity, noa.entities.names.position)) return;
+        
+        const playerPos = noa.entities.getPosition(noa.playerEntity);
+        const dronePos = noa.entities.getPosition(droneEntity);
+        
+        // Calculate distance to player
+        const dx = playerPos[0] - dronePos[0];
+        const dy = playerPos[1] - dronePos[1];
+        const dz = playerPos[2] - dronePos[2];
+        const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        
+        // Get drone physics
+        const physics = noa.entities.getPhysics(droneEntity);
+        if (!physics) return;
+        
+        // Follow player if within 2 chunks (64 blocks)
+        if (distance < 64) {
+            // Calculate normalized direction to player
+            const dirX = dx / distance;
+            const dirY = dy / distance;
+            const dirZ = dz / distance;
+            
+            // Set drone velocity (75% of player speed)
+            const droneSpeed = 3; // 75% of player's 4 speed
+            physics.body.velocity[0] = dirX * droneSpeed;
+            physics.body.velocity[1] = dirY * droneSpeed + 2; // Stay above player
+            physics.body.velocity[2] = dirZ * droneSpeed;
+            
+            // Fire projectile if within 1 chunk (32 blocks) and cooldown passed
+            const currentTime = Date.now();
+            if (distance < 32 && currentTime - lastFireTime > fireRate) {
+                fireProjectile(dronePos, playerPos);
+                lastFireTime = currentTime;
+            }
+        } else {
+            // Stop moving if too far
+            physics.body.velocity[0] = 0;
+            physics.body.velocity[1] = 0;
+            physics.body.velocity[2] = 0;
+        }
+    }, 100); // Update 10 times per second
+}
+
+// Fire projectile from drone to player
+function fireProjectile(fromPos, toPos) {
+    const scene = noa.rendering.getScene();
+    
+    // Create small yellow sphere for projectile
+    const projectile = BABYLON.MeshBuilder.CreateSphere('projectile', {
+        diameter: 0.3
+    }, scene);
+    
+    // Create bright yellow material
+    const projectileMat = noa.rendering.makeStandardMaterial('projectileMat');
+    projectileMat.diffuseColor = new BABYLON.Color3(1, 1, 0); // Bright yellow
+    projectileMat.emissiveColor = new BABYLON.Color3(0.5, 0.5, 0); // Glow effect
+    projectile.material = projectileMat;
+    
+    // Create projectile entity with physics
+    const projectileEntity = noa.entities.add(
+        [fromPos[0], fromPos[1], fromPos[2]], 
+        0.3, 0.3, projectile, [0, 0, 0], true, false
+    );
+    
+    // Calculate direction
+    const dx = toPos[0] - fromPos[0];
+    const dy = toPos[1] - fromPos[1];
+    const dz = toPos[2] - fromPos[2];
+    const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    
+    const dirX = dx / distance;
+    const dirY = dy / distance;
+    const dirZ = dz / distance;
+    
+    // Set projectile physics properties
+    const projectileSpeed = 10;
+    const physics = noa.entities.getPhysics(projectileEntity);
+    if (physics && physics.body) {
+        physics.body.mass = 0.1;
+        physics.body.friction = 0;
+        physics.body.restitution = 0;
+        physics.body.gravityMultiplier = 0; // No gravity for projectiles
+        physics.body.velocity[0] = dirX * projectileSpeed;
+        physics.body.velocity[1] = dirY * projectileSpeed;
+        physics.body.velocity[2] = dirZ * projectileSpeed;
+    }
+    
+    // Store projectile for collision checking
+    projectiles.push({
+        entity: projectileEntity,
+        startTime: Date.now(),
+        lifetime: 5000 // 5 seconds max lifetime
+    });
+    
+    console.log('Projectile fired!');
+}
+
+// Check projectile collisions and cleanup
+setInterval(() => {
+    const currentTime = Date.now();
+    const playerPos = noa.entities.getPosition(noa.playerEntity);
+    
+    projectiles = projectiles.filter(proj => {
+        // Check if projectile still exists
+        if (!noa.entities.hasComponent(proj.entity, noa.entities.names.position)) {
+            return false;
+        }
+        
+        const projPos = noa.entities.getPosition(proj.entity);
+        
+        // Check collision with player
+        const dx = playerPos[0] - projPos[0];
+        const dy = playerPos[1] - projPos[1];
+        const dz = playerPos[2] - projPos[2];
+        const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        
+        if (distance < 1) { // Hit player
+            damagePlayer(5);
+            noa.entities.remove(proj.entity);
+            console.log('Player hit by projectile! -5 HP');
+            return false;
+        }
+        
+        // Check lifetime
+        if (currentTime - proj.startTime > proj.lifetime) {
+            noa.entities.remove(proj.entity);
+            return false;
+        }
+        
+        // Check if hit ground or wall
+        const blockAt = noa.world.getBlockID(
+            Math.floor(projPos[0]),
+            Math.floor(projPos[1]),
+            Math.floor(projPos[2])
+        );
+        
+        if (blockAt !== 0) { // Hit something solid
+            noa.entities.remove(proj.entity);
+            return false;
+        }
+        
+        return true; // Keep projectile
+    });
+}, 50); // Check 20 times per second
+
+// Handle player death
+function handlePlayerDeath() {
+    const state = getPlayerState();
+    if (!state || state.health > 0) return;
+    
+    console.log('Player died! Respawning...');
+    
+    // Reset health
+    state.health = 100;
+    state.score = 0; // Lose all loot/score
+    updateHealthDisplay(state.health);
+    
+    // Find spawn position
+    const spawnPos = findSpawnRoom(WORLD_SEED);
+    noa.entities.setPosition(noa.playerEntity, spawnPos);
+    
+    // Respawn drone at a distance
+    if (droneEntity && noa.entities.hasComponent(droneEntity, noa.entities.names.position)) {
+        noa.entities.setPosition(droneEntity, [spawnPos[0] + 20, spawnPos[1] + 10, spawnPos[2] + 20]);
+    }
+    
+    console.log('Player respawned with full health, lost all loot');
 }
