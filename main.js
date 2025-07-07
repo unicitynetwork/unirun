@@ -125,12 +125,56 @@ function westExitExists(x, z, seed) {
     return result;
 }
 
-// Ensure at least one exit exists
-function getRoomExits(x, z, seed) {
+// Get raw room exits without any redirection logic
+function getRawRoomExits(x, z, seed) {
     const east = eastExitExists(x, z, seed);
     const north = northExitExists(x, z, seed);
     const west = westExitExists(x, z, seed);
     
+    // If no exits, force at least one
+    if (!east && !north && !west) {
+        const rng = seededRandom(seed + '_forcedexit_' + (x * 1000) + '_' + (z * 1000));
+        const choice = Math.floor(rng() * 3);
+        return {
+            east: choice === 0,
+            north: choice === 1,
+            west: choice === 2
+        };
+    }
+    
+    return { east, north, west };
+}
+
+// Ensure at least one exit exists
+function getRoomExits(x, z, seed) {
+    let east = eastExitExists(x, z, seed);
+    let north = northExitExists(x, z, seed);
+    const west = westExitExists(x, z, seed);
+    
+    // Check for loop prevention: if east exit exists and no other exits
+    if (east && !north && !west) {
+        // Check if there's an incoming east corridor from the adjacent room
+        let hasIncomingEastCorridor = false;
+        
+        // Look for the closest room to the east
+        for (let checkX = x + 1; checkX <= x + 20; checkX++) {
+            if (roomExists(checkX, z, seed)) {
+                // Use raw exits to avoid recursion
+                const neighborExits = getRawRoomExits(checkX, z, seed);
+                if (neighborExits.west) {
+                    // There's an incoming corridor from the east
+                    hasIncomingEastCorridor = true;
+                }
+                break; // Stop at first room found
+            }
+        }
+        
+        // If we have an incoming east corridor, redirect our east exit to north
+        if (hasIncomingEastCorridor) {
+            east = false;
+            north = true; // Force north exit instead
+        }
+    }
     
     // If no exits, force at least one
     if (!east && !north && !west) {
@@ -389,7 +433,8 @@ async function initializePlayerToken() {
 
 // Create a new player token
 async function createNewPlayerToken() {
-    const spawnPosition = calculateInitialSpawnPoint(WORLD_SEED);
+    // Don't set a position in the initial state - let the spawn logic handle it
+    const spawnPosition = null;
     
     const initialState = {
         name: "Runner-" + Math.floor(Math.random() * 1000),
@@ -553,14 +598,86 @@ function setupNoaEngine() {
     });
     
     
+    // Function to find a valid spawn position in a room
+    function findSpawnRoom(seed) {
+        console.log('findSpawnRoom called with seed:', seed);
+        
+        // First check if chunk 0,0 has a room
+        console.log(`Chunk 0,0 has room: ${roomExists(0, 0, seed)}`);
+        
+        // Search in a spiral pattern from origin
+        for (let radius = 0; radius < 10; radius++) {
+            for (let x = -radius; x <= radius; x++) {
+                for (let z = -radius; z <= radius; z++) {
+                    // Check if we're on the edge of the search square
+                    if (Math.abs(x) === radius || Math.abs(z) === radius) {
+                        const hasRoom = roomExists(x, z, seed);
+                        if (hasRoom) {
+                            console.log(`Checking chunk (${x}, ${z}): has room = ${hasRoom}`);
+                            // Get room center in local chunk coordinates
+                            const localPos = getRoomCenter(x, z, seed);
+                            // Convert to world coordinates
+                            const worldX = x * 32 + localPos[0];
+                            const worldZ = z * 32 + localPos[2];
+                            console.log(`Found spawn room at chunk (${x}, ${z})`);
+                            console.log(`  Local pos: ${localPos}`);
+                            console.log(`  World pos: [${worldX}, 1, ${worldZ}]`);
+                            return [worldX, 1, worldZ];
+                        }
+                    }
+                }
+            }
+        }
+        // Fallback to origin
+        console.log('No room found in 10 chunk radius! Using fallback position');
+        return [8, 1, 8];
+    }
+    
     // Set player position from token
     const playerState = getPlayerState();
-    let position = playerState?.position || [8, 5, 8]; // Start at y=5, well above ground
+    console.log('Player state from token:', playerState);
+    let position = playerState?.position || null;
+    console.log('Position from state:', position);
     
-    // Sanity check - if player is way below the world, reset them
-    if (position[1] < -10) {
-        console.log('Player position was invalid, resetting to spawn point');
-        position = [8, 5, 8];
+    // If no saved position or invalid position, we need to find a spawn room
+    // But we'll do this after chunks are generated
+    if (!position || position[1] < -10) {
+        console.log('Need to find spawn room, using temporary position...');
+        console.log('Current position:', position);
+        position = [16, 50, 16]; // High up to prevent getting stuck
+        
+        // After chunks generate, find proper spawn
+        setTimeout(() => {
+            console.log('Timeout triggered - starting spawn search...');
+            // Force chunk generation around origin first
+            forceChunkGeneration();
+            
+            setTimeout(() => {
+                console.log('Finding spawn room...');
+                const spawnPos = findSpawnRoom(WORLD_SEED);
+                noa.entities.setPosition(noa.playerEntity, spawnPos);
+                
+                // Verify spawn
+                setTimeout(() => {
+                    const blockBelow = noa.world.getBlockID(
+                        Math.floor(spawnPos[0]), 
+                        Math.floor(spawnPos[1] - 1), 
+                        Math.floor(spawnPos[2])
+                    );
+                    console.log(`Spawn position: ${spawnPos}`);
+                    console.log(`Block below spawn: ${blockBelow} (roomFloorID=${roomFloorID})`);
+                    console.log(`Chunk: ${Math.floor(spawnPos[0]/32)}, ${Math.floor(spawnPos[2]/32)}`);
+                    
+                    // If still not in a room, try to find the actual room center
+                    if (blockBelow !== roomFloorID) {
+                        console.log('Not in room! Checking actual generation...');
+                        const chunkX = Math.floor(spawnPos[0] / 32);
+                        const chunkZ = Math.floor(spawnPos[2] / 32);
+                        console.log(`Room should exist at chunk ${chunkX},${chunkZ}: ${roomExists(chunkX, chunkZ, WORLD_SEED)}`);
+                    }
+                }, 500);
+            }, 1000); // Wait for forced chunk generation
+        }, 1000); // Initial wait
     }
     
     noa.entities.setPosition(noa.playerEntity, position);
@@ -985,6 +1102,51 @@ function setupNoaEngine() {
             noa.camera.heading = targetHeading;
         }
     }, 100); // Check every 100ms for faster correction
+    
+    // Handle downward movement slowdown on stairs and blue corridors
+    setInterval(() => {
+        if (!noa || !noa.playerEntity) return;
+        
+        const pos = noa.entities.getPosition(noa.playerEntity);
+        const physics = noa.entities.getPhysics(noa.playerEntity);
+        if (!physics || !physics.body) return;
+        
+        // Check block at player's feet
+        const blockBelow = noa.world.getBlockID(
+            Math.floor(pos[0]), 
+            Math.floor(pos[1] - 1), 
+            Math.floor(pos[2])
+        );
+        
+        // Check if we're in a blue corridor (at y=3) or on stairs
+        const inBlueCorridorHeight = Math.floor(pos[1]) >= 3 && Math.floor(pos[1]) <= 4;
+        const onStairs = blockBelow === stairID;
+        
+        // Also check if we're above a blue corridor floor
+        const blockTwoBelow = noa.world.getBlockID(
+            Math.floor(pos[0]), 
+            Math.floor(pos[1] - 2), 
+            Math.floor(pos[2])
+        );
+        const aboveBlueCorridorFloor = blockTwoBelow === corridorNorthID;
+        
+        // If we're moving downward in a blue corridor area or on stairs
+        if ((inBlueCorridorHeight && aboveBlueCorridorFloor) || onStairs) {
+            const velocity = physics.body.velocity;
+            
+            // If moving downward, limit downward velocity
+            if (velocity[1] < -2) {
+                physics.body.velocity[1] = -2; // Cap downward speed
+            }
+            
+            // Also reduce forward speed when descending
+            if (velocity[1] < 0) {
+                // Reduce horizontal velocity to 50% when going down
+                physics.body.velocity[0] *= 0.5;
+                physics.body.velocity[2] *= 0.5;
+            }
+        }
+    }, 50); // Check frequently for smooth control
     
     // Handle continuous auto-strafing towards exit
     setInterval(() => {
