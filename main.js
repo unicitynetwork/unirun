@@ -682,7 +682,7 @@ function setupNoaEngine() {
     
     // Handle continuous auto-strafing towards exit
     setInterval(() => {
-        if (!noa || !noa.playerEntity || !noa._targetExit) return;
+        if (!noa || !noa.playerEntity) return;
         
         // Don't strafe while turning
         if (noa._isTurning) return;
@@ -701,21 +701,55 @@ function setupNoaEngine() {
             return;
         }
         
-        const target = noa._targetExit;
+        // Always align to exit based on current facing direction
+        const movement = noa.entities.getMovement(noa.playerEntity);
+        if (!movement) return;
+        
+        // Get current facing direction
+        let normalizedHeading = movement.heading % (2 * Math.PI);
+        if (normalizedHeading < 0) normalizedHeading += 2 * Math.PI;
+        
+        let facingDir = 'north';
+        if (normalizedHeading >= Math.PI * 0.25 && normalizedHeading < Math.PI * 0.75) {
+            facingDir = 'east';
+        } else if (normalizedHeading >= Math.PI * 0.75 && normalizedHeading < Math.PI * 1.25) {
+            facingDir = 'south';
+        } else if (normalizedHeading >= Math.PI * 1.25 && normalizedHeading < Math.PI * 1.75) {
+            facingDir = 'west';
+        }
+        
+        // Skip if facing south
+        if (facingDir === 'south') return;
+        
+        // Calculate target position for current direction
+        const chunkX = Math.floor(pos[0] / 32);
+        const chunkZ = Math.floor(pos[2] / 32);
+        let targetExit = null;
+        
+        if (facingDir === 'north') {
+            targetExit = { x: chunkX * 32 + 15 + 0.5, z: pos[2] };
+        } else if (facingDir === 'east') {
+            targetExit = { x: pos[0], z: chunkZ * 32 + 13 + 0.5 };
+        } else if (facingDir === 'west') {
+            targetExit = { x: pos[0], z: chunkZ * 32 + 17 + 0.5 };
+        }
+        
+        if (!targetExit) return;
+        
         let needsStrafe = false;
         let strafeDir = [0, 0, 0];
         
-        // Calculate strafe direction based on target direction
-        if (noa._targetDir === 'north' || noa._targetDir === 'south') {
-            // Need to align X position
-            const xDiff = target.x - pos[0];
+        // Calculate strafe direction based on facing direction
+        if (facingDir === 'north') {
+            // Need to align X position to x=15
+            const xDiff = targetExit.x - pos[0];
             if (Math.abs(xDiff) > 0.1) {
                 needsStrafe = true;
                 strafeDir[0] = xDiff > 0 ? 1 : -1;
             }
-        } else if (noa._targetDir === 'east' || noa._targetDir === 'west') {
-            // Need to align Z position
-            const zDiff = target.z - pos[2];
+        } else if (facingDir === 'east' || facingDir === 'west') {
+            // Need to align Z position (z=13 for east, z=17 for west)
+            const zDiff = targetExit.z - pos[2];
             if (Math.abs(zDiff) > 0.1) {
                 needsStrafe = true;
                 strafeDir[2] = zDiff > 0 ? 1 : -1;
@@ -734,13 +768,13 @@ function setupNoaEngine() {
                     strafeDir[2] * strafeForce
                 ]);
                 
-                console.log('Auto-strafing towards exit:', noa._targetDir, 'diff:', strafeDir);
+                // Log strafe status occasionally
+                if (Math.random() < 0.05) {  // 5% chance, about once per second
+                    console.log('Auto-strafing:', facingDir, 'to', targetExit);
+                }
             }
         } else {
-            // Target reached, clear it
-            noa._targetExit = null;
-            noa._targetDir = null;
-            console.log('Reached exit alignment');
+            // Already aligned
         }
     }, 50); // Run frequently for smooth movement
     
@@ -906,18 +940,19 @@ function setupNoaEngine() {
                 
                 // Always align to standard exit positions when turning
                 // We know exits are at fixed positions relative to chunk
+                // Corridors are 3 blocks wide, we want to align to the middle
                 const chunkX = Math.floor(pos[0] / 32);
                 const chunkZ = Math.floor(pos[2] / 32);
                 let targetExit = null;
                 
                 if (targetDir === 'north') {
-                    // North exit is always at x=15 (relative to chunk)
+                    // North corridor is at x=14-16, middle is x=15
                     targetExit = { x: chunkX * 32 + 15 + 0.5, z: pos[2] };
                 } else if (targetDir === 'east') {
-                    // East exit is always at z=13 (relative to chunk)
+                    // East corridor is at z=12-14, middle is z=13
                     targetExit = { x: pos[0], z: chunkZ * 32 + 13 + 0.5 };
                 } else if (targetDir === 'west') {
-                    // West exit is always at z=17 (relative to chunk)
+                    // West corridor is at z=16-18, middle is z=17
                     targetExit = { x: pos[0], z: chunkZ * 32 + 17 + 0.5 };
                 }
                 // Never exit south - rooms only have E/N/W exits!
