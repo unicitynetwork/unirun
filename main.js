@@ -591,7 +591,10 @@ function updateHealthDisplay(health, maxHealth = 100) {
 // Damage player (for testing or future gameplay)
 function damagePlayer(amount) {
     // Don't damage if already dead
-    if (currentPlayerHealth <= 0) return;
+    if (currentPlayerHealth <= 0) {
+        console.log('Player already dead, health:', currentPlayerHealth);
+        return;
+    }
     
     currentPlayerHealth = Math.max(0, currentPlayerHealth - amount);
     updateHealthDisplay(currentPlayerHealth);
@@ -600,6 +603,7 @@ function damagePlayer(amount) {
     
     // Check for death
     if (currentPlayerHealth <= 0) {
+        console.log('Player health reached 0, calling handlePlayerDeath()');
         handlePlayerDeath();
     }
 }
@@ -738,6 +742,14 @@ function setupNoaEngine() {
     if (playerState && playerState.health !== undefined) {
         currentPlayerHealth = playerState.health;
         updateHealthDisplay(currentPlayerHealth);
+        console.log('Loaded player health from state:', currentPlayerHealth);
+        
+        // If player died in previous session, respawn them
+        if (currentPlayerHealth <= 0) {
+            console.log('Player loaded with 0 health, triggering respawn');
+            currentPlayerHealth = 100; // Reset health temporarily so handlePlayerDeath works
+            setTimeout(() => handlePlayerDeath(), 100); // Delay to ensure engine is ready
+        }
     } else {
         currentPlayerHealth = 100; // Default to full health
         updateHealthDisplay(currentPlayerHealth);
