@@ -86,14 +86,14 @@ function calculateInitialSpawnPoint(seed) {
                 const x = centerX + dx;
                 const z = centerZ + dz;
                 if (x >= 0 && x < chunkSize && z >= 0 && z < chunkSize && level[x][z] !== 'wall') {
-                    return [x + 0.5, 1, z + 0.5]; // Center of the block, 1 unit above ground
+                    return [x + 0.5, 6, z + 0.5]; // Center of the block, 6 blocks above ground
                 }
             }
         }
     }
     
     // Fallback to center if no open space found
-    return [centerX + 0.5, 1, centerZ + 0.5];
+    return [centerX + 0.5, 6, centerZ + 0.5];
 }
 
 // RNG functions for room and exit determination
