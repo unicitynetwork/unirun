@@ -946,6 +946,27 @@ function setupNoaEngine() {
         const movement = noa.entities.getMovement(noa.playerEntity);
         if (!movement) return;
         
+        // Check if we've entered a corridor - if so, stop turning immediately
+        const pos = noa.entities.getPosition(noa.playerEntity);
+        const blockBelow = noa.world.getBlockID(
+            Math.floor(pos[0]), 
+            Math.floor(pos[1] - 1), 
+            Math.floor(pos[2])
+        );
+        
+        const inCorridor = blockBelow === corridorEastID || 
+                          blockBelow === corridorNorthID || 
+                          blockBelow === corridorWestID;
+        
+        if (inCorridor) {
+            // Entered corridor - stop turning immediately
+            noa._isTurning = false;
+            noa._targetExit = null;
+            noa._targetDir = null;
+            console.log('Turn cancelled - entered corridor');
+            return;
+        }
+        
         const currentHeading = movement.heading;
         const targetHeading = noa._targetHeading;
         
@@ -1136,9 +1157,10 @@ function setupNoaEngine() {
             }
         } else if (inCorridor) {
             // In corridors: strafe works normally, no turning needed
-            // Clear any target exit when entering corridor
+            // Clear any target exit and turning state when entering corridor
             noa._targetExit = null;
             noa._targetDir = null;
+            noa._isTurning = false; // Stop any ongoing turning animation
         }
     });
     
