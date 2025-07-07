@@ -2021,6 +2021,18 @@ function fireProjectile(fromPos, toPos) {
         physics.body.sleepTimeLimit = 0;
     }
     
+    // Add collision callback to detect impacts immediately
+    if (physics && physics.body) {
+        physics.body.onCollide = function(contactInfo) {
+            // Delete projectile on any collision
+            setTimeout(() => {
+                if (noa.entities.hasComponent(projectileEntity, noa.entities.names.position)) {
+                    noa.entities.deleteEntity(projectileEntity);
+                }
+            }, 0);
+        };
+    }
+    
     // Store projectile for collision checking
     projectiles.push({
         entity: projectileEntity,
@@ -2075,7 +2087,8 @@ setInterval(() => {
             physics.body.velocity[2] = proj.velocity[2];
         }
         
-        // Check if hit ground or wall
+        // Check if hit ground or wall - use raycasting for better collision
+        // Check current position
         const blockAt = noa.world.getBlockID(
             Math.floor(projPos[0]),
             Math.floor(projPos[1]),
@@ -2087,9 +2100,20 @@ setInterval(() => {
             return false;
         }
         
+        // Also check if velocity is near zero (stuck on surface)
+        const physics = noa.entities.getPhysics(proj.entity);
+        if (physics && physics.body) {
+            const vel = physics.body.velocity;
+            const speed = Math.sqrt(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]);
+            if (speed < 5) { // Moving too slowly, must have hit something
+                noa.entities.deleteEntity(proj.entity);
+                return false;
+            }
+        }
+        
         return true; // Keep projectile
     });
-}, 50); // Check 20 times per second
+}, 16); // Check 60 times per second for fast bullets
 
 // Handle player death
 function handlePlayerDeath() {
