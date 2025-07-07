@@ -523,6 +523,7 @@ function setupNoaEngine() {
     var corridorEastColor = [0.8, 0.3, 0.3]; // Reddish for east corridors
     var corridorNorthColor = [0.3, 0.3, 0.8]; // Bluish for north corridors
     var corridorWestColor = [0.8, 0.8, 0.3]; // Yellowish for west corridors
+    var stairColor = [0.5, 0.5, 0.7]; // Light blue for stairs
     
     noa.registry.registerMaterial('dirt', { color: brownish });
     noa.registry.registerMaterial('stone', { color: grayish });
@@ -530,6 +531,7 @@ function setupNoaEngine() {
     noa.registry.registerMaterial('corridorEast', { color: corridorEastColor });
     noa.registry.registerMaterial('corridorNorth', { color: corridorNorthColor });
     noa.registry.registerMaterial('corridorWest', { color: corridorWestColor });
+    noa.registry.registerMaterial('stair', { color: stairColor });
     
     // Register blocks
     var dirtID = noa.registry.registerBlock(1, { material: 'dirt' });
@@ -538,6 +540,7 @@ function setupNoaEngine() {
     corridorEastID = noa.registry.registerBlock(4, { material: 'corridorEast' });
     corridorNorthID = noa.registry.registerBlock(5, { material: 'corridorNorth' });
     corridorWestID = noa.registry.registerBlock(6, { material: 'corridorWest' });
+    var stairID = noa.registry.registerBlock(7, { material: 'stair' });
     
     
     // Set player position from token
@@ -585,8 +588,6 @@ function setupNoaEngine() {
                             voxelID = roomFloorID; // Room floor
                         } else if (level[i][k] === 'corridor_east') {
                             voxelID = corridorEastID; // East corridor floor
-                        } else if (level[i][k] === 'corridor_north') {
-                            voxelID = corridorNorthID; // North corridor floor
                         } else if (level[i][k] === 'corridor_west') {
                             voxelID = corridorWestID; // West corridor floor
                         } else {
@@ -596,6 +597,47 @@ function setupNoaEngine() {
                     // Walls at y=1 and y=2
                     else if ((worldY === 1 || worldY === 2) && level[i][k] === 'wall') {
                         voxelID = dirtID; // Wall
+                    }
+                    // North corridors at y=3 (raised)
+                    else if (worldY === 3 && level[i][k] === 'corridor_north') {
+                        voxelID = corridorNorthID; // North corridor floor at y=3
+                    }
+                    // Support blocks under raised north corridor
+                    else if ((worldY === 1 || worldY === 2) && level[i][k] === 'corridor_north') {
+                        voxelID = dirtID; // Support pillars under north corridor
+                    }
+                    // Simple stairs at room boundaries
+                    else if (i >= 14 && i <= 16) { // North corridor x range
+                        // Check if adjacent to room
+                        const southTile = (k > 0) ? level[i][k-1] : 'wall';
+                        const northTile = (k < 31) ? level[i][k+1] : 'wall';
+                        const currentTile = level[i][k];
+                        
+                        // Stairs from room to north corridor
+                        if (southTile === 'room' && currentTile === 'corridor_north') {
+                            if (worldY === 1 && k < 4) {
+                                voxelID = stairID;
+                            } else if (worldY === 2 && k < 6) {
+                                voxelID = stairID;
+                            }
+                        }
+                        // Stairs from north corridor to room  
+                        else if (currentTile === 'corridor_north' && northTile === 'room') {
+                            if (worldY === 1 && k > 27) {
+                                voxelID = stairID;
+                            } else if (worldY === 2 && k > 25) {
+                                voxelID = stairID;
+                            }
+                        }
+                    }
+                    // Walls alongside raised north corridors at y=4 and y=5
+                    else if ((worldY === 4 || worldY === 5)) {
+                        // Check if we're next to a north corridor
+                        if (i === 13 && level[14][k] === 'corridor_north') {
+                            voxelID = dirtID; // West wall of north corridor
+                        } else if (i === 17 && level[16][k] === 'corridor_north') {
+                            voxelID = dirtID; // East wall of north corridor
+                        }
                     }
                     
                     data.set(i, j, k, voxelID);
