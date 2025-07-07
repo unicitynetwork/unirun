@@ -15,6 +15,8 @@ let corridorEastID;
 let corridorNorthID;
 let corridorWestID;
 
+// No custom meshes needed - noa only supports full block collision
+
 // Initialize the game when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
     initializeGame();
@@ -470,6 +472,7 @@ function getPlayerState() {
     }
 }
 
+
 // Set up noa engine
 function setupNoaEngine() {
     // Create engine options
@@ -540,7 +543,12 @@ function setupNoaEngine() {
     corridorEastID = noa.registry.registerBlock(4, { material: 'corridorEast' });
     corridorNorthID = noa.registry.registerBlock(5, { material: 'corridorNorth' });
     corridorWestID = noa.registry.registerBlock(6, { material: 'corridorWest' });
-    var stairID = noa.registry.registerBlock(7, { material: 'stair' });
+    // Simple stair block - full cube collision
+    var stairID = noa.registry.registerBlock(7, { 
+        material: 'stair',
+        solid: true,
+        opaque: false
+    });
     
     
     // Set player position from token
@@ -655,28 +663,23 @@ function setupNoaEngine() {
                             voxelID = dirtID; // Support pillars under north corridor
                         }
                     }
-                    // Simple stairs at room boundaries
+                    // Stairs at room/north corridor boundaries
                     else if (i >= 14 && i <= 16) { // North corridor x range
-                        // Check if adjacent to room
+                        // Check if we're at a room boundary
                         const southTile = (k > 0) ? level[i][k-1] : 'wall';
                         const northTile = (k < 31) ? level[i][k+1] : 'wall';
                         const currentTile = level[i][k];
                         
-                        // Stairs from room to north corridor
-                        if (southTile === 'room' && currentTile === 'corridor_north') {
-                            if (worldY === 1 && k < 4) {
-                                voxelID = stairID;
-                            } else if (worldY === 2 && k < 6) {
-                                voxelID = stairID;
+                        // Place stairs where room meets north corridor
+                        if ((southTile === 'room' && currentTile === 'corridor_north') ||
+                            (currentTile === 'room' && northTile === 'corridor_north')) {
+                            // Create 3-step staircase
+                            if (worldY === 1) {
+                                voxelID = stairID; // First step at y=1
+                            } else if (worldY === 2) {
+                                voxelID = stairID; // Second step at y=2
                             }
-                        }
-                        // Stairs from north corridor to room  
-                        else if (currentTile === 'corridor_north' && northTile === 'room') {
-                            if (worldY === 1 && k > 27) {
-                                voxelID = stairID;
-                            } else if (worldY === 2 && k > 25) {
-                                voxelID = stairID;
-                            }
+                            // Third step is the corridor floor at y=3
                         }
                     }
                     // Walls alongside raised north corridors at y=4 and y=5
