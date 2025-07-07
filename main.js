@@ -674,6 +674,9 @@ function setupNoaEngine() {
     setInterval(() => {
         if (!noa || !noa.playerEntity || !noa._targetExit) return;
         
+        // Don't strafe while turning
+        if (noa._isTurning) return;
+        
         const pos = noa.entities.getPosition(noa.playerEntity);
         const blockBelow = noa.world.getBlockID(
             Math.floor(pos[0]), 
@@ -730,6 +733,41 @@ function setupNoaEngine() {
             console.log('Reached exit alignment');
         }
     }, 50); // Run frequently for smooth movement
+    
+    // Handle smooth turning
+    setInterval(() => {
+        if (!noa || !noa.playerEntity || !noa._isTurning) return;
+        
+        const movement = noa.entities.getMovement(noa.playerEntity);
+        if (!movement) return;
+        
+        const currentHeading = movement.heading;
+        const targetHeading = noa._targetHeading;
+        
+        // Calculate shortest rotation distance
+        let diff = targetHeading - currentHeading;
+        
+        // Normalize to -PI to PI range
+        while (diff > Math.PI) diff -= 2 * Math.PI;
+        while (diff < -Math.PI) diff += 2 * Math.PI;
+        
+        // Turn speed (radians per frame)
+        const turnSpeed = 0.15; // About 8.6 degrees per frame, ~90 degrees in 0.5 seconds at 20fps
+        
+        // Apply rotation
+        if (Math.abs(diff) < turnSpeed) {
+            // Close enough, snap to target
+            movement.heading = targetHeading;
+            noa.camera.heading = targetHeading;
+            noa._isTurning = false;
+            console.log('Turn complete');
+        } else {
+            // Rotate towards target
+            const rotationStep = diff > 0 ? turnSpeed : -turnSpeed;
+            movement.heading += rotationStep;
+            noa.camera.heading += rotationStep;
+        }
+    }, 50); // Run frequently for smooth rotation
     
     // Add render callback for continuous movement and chunk processing
     noa.on('beforeRender', () => {
@@ -877,9 +915,9 @@ function setupNoaEngine() {
                 console.log('Turning:', currentDir, '->', targetDir, 'heading:', targetHeading.toFixed(2));
                 console.log('Available exits:', Object.keys(roomInfo.exits).filter(dir => roomInfo.exits[dir] !== null));
                 
-                // Apply the turn
-                movement.heading = targetHeading;
-                noa.camera.heading = targetHeading;
+                // Store target heading for smooth turning
+                noa._targetHeading = targetHeading;
+                noa._isTurning = true;
                 
                 // Store the target exit info for continuous strafing
                 noa._targetExit = targetExit;
