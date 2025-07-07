@@ -704,6 +704,14 @@ function setupNoaEngine() {
                 const roomInfo = analyzeRoom(Math.floor(pos[0]), Math.floor(pos[2]));
                 const currentHeading = movement.heading;
                 
+                // Debug log room info
+                console.log('Room analysis:', {
+                    playerPos: [Math.floor(pos[0]), Math.floor(pos[2])],
+                    exits: Object.keys(roomInfo.exits).filter(dir => roomInfo.exits[dir] !== null),
+                    currentHeading: currentHeading.toFixed(2),
+                    input: noa.inputs.state.left ? 'left' : 'right'
+                });
+                
                 // Determine which direction player is currently facing
                 // Normalize heading to 0-2π range
                 let normalizedHeading = currentHeading % (2 * Math.PI);
@@ -719,60 +727,36 @@ function setupNoaEngine() {
                     currentDir = 'west';
                 }
                 
-                // Calculate target direction based on input
-                let targetExit = null;
+                // Simple 90-degree turns when pressing left/right in rooms
+                let newHeading = currentHeading;
+                
                 if (noa.inputs.state.right) {
-                    // Turn right (clockwise)
-                    if (currentDir === 'north' && roomInfo.exits.east) targetExit = roomInfo.exits.east;
-                    else if (currentDir === 'east' && roomInfo.exits.south) {
-                        // Check if south exit leads to a north corridor (forbidden)
-                        if (roomInfo.exits.south && noa.world.getBlockID(15, 0, roomInfo.exits.south.z - 1) !== corridorNorthID) {
-                            targetExit = roomInfo.exits.south;
-                        }
-                    }
-                    else if (currentDir === 'south' && roomInfo.exits.west) targetExit = roomInfo.exits.west;
-                    else if (currentDir === 'west' && roomInfo.exits.north) targetExit = roomInfo.exits.north;
+                    // Turn right (clockwise) - add 90 degrees
+                    newHeading = currentHeading + Math.PI / 2;
                 } else if (noa.inputs.state.left) {
-                    // Turn left (counter-clockwise)
-                    if (currentDir === 'north' && roomInfo.exits.west) targetExit = roomInfo.exits.west;
-                    else if (currentDir === 'west' && roomInfo.exits.south) {
-                        // Check if south exit leads to a north corridor (forbidden)
-                        if (roomInfo.exits.south && noa.world.getBlockID(15, 0, roomInfo.exits.south.z - 1) !== corridorNorthID) {
-                            targetExit = roomInfo.exits.south;
-                        }
-                    }
-                    else if (currentDir === 'south' && roomInfo.exits.east) targetExit = roomInfo.exits.east;
-                    else if (currentDir === 'east' && roomInfo.exits.north) targetExit = roomInfo.exits.north;
+                    // Turn left (counter-clockwise) - subtract 90 degrees
+                    newHeading = currentHeading - Math.PI / 2;
                 }
                 
-                // If no exit in desired direction, check for exit behind
-                if (!targetExit) {
-                    if (currentDir === 'north' && roomInfo.exits.south) {
-                        // Check if south exit leads to a north corridor (forbidden)
-                        if (noa.world.getBlockID(15, 0, roomInfo.exits.south.z - 1) !== corridorNorthID) {
-                            targetExit = roomInfo.exits.south;
-                        }
+                // Normalize heading to 0-2π range
+                newHeading = newHeading % (2 * Math.PI);
+                if (newHeading < 0) newHeading += 2 * Math.PI;
+                
+                // Check if we would be facing south in a north corridor (forbidden)
+                const facingSouth = (newHeading > Math.PI * 0.75 && newHeading < Math.PI * 1.25);
+                if (facingSouth) {
+                    // Check if there's a south exit that leads to a north corridor
+                    if (roomInfo.exits.south && noa.world.getBlockID(15, 0, roomInfo.exits.south.z - 1) === corridorNorthID) {
+                        console.log('Prevented turning south towards north corridor');
+                        newHeading = currentHeading; // Don't turn
                     }
-                    else if (currentDir === 'south' && roomInfo.exits.north) targetExit = roomInfo.exits.north;
-                    else if (currentDir === 'east' && roomInfo.exits.west) targetExit = roomInfo.exits.west;
-                    else if (currentDir === 'west' && roomInfo.exits.east) targetExit = roomInfo.exits.east;
                 }
                 
-                // Apply the turn and position if we found an exit
-                if (targetExit) {
-                    // Set position near the exit
-                    noa.entities.setPosition(noa.playerEntity, [
-                        targetExit.x + 0.5,
-                        pos[1],
-                        targetExit.z + 0.5
-                    ]);
-                    
-                    // Set heading to face the exit
-                    movement.heading = targetExit.heading;
-                    noa.camera.heading = targetExit.heading;
-                    
-                    console.log(`Positioned at exit facing ${targetExit.heading.toFixed(2)} rad`);
-                }
+                console.log('Turning from', currentHeading.toFixed(2), 'to', newHeading.toFixed(2));
+                
+                // Apply the turn
+                movement.heading = newHeading;
+                noa.camera.heading = newHeading;
                 
                 // Disable strafe
                 noa.inputs.state.left = false;
