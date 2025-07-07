@@ -835,38 +835,19 @@ function setupNoaEngine() {
                 let snappedHeading = closestCardinal.heading;
                 let targetDir = currentDir; // Initialize target direction
                 
-                // Simple turning logic
+                // Simple turning logic - NEVER turn to face south (no south exits)
                 if (noa.inputs.state.right) {
-                    // Turn right (clockwise)
+                    // Turn right (clockwise), skip south
                     if (currentDir === 'north') targetDir = 'east';
-                    else if (currentDir === 'east') targetDir = 'south';
+                    else if (currentDir === 'east') targetDir = 'west'; // Skip south!
                     else if (currentDir === 'south') targetDir = 'west';
                     else if (currentDir === 'west') targetDir = 'north';
                 } else if (noa.inputs.state.left) {
-                    // Turn left (counter-clockwise)
+                    // Turn left (counter-clockwise), skip south
                     if (currentDir === 'north') targetDir = 'west';
-                    else if (currentDir === 'west') targetDir = 'south';
+                    else if (currentDir === 'west') targetDir = 'east'; // Skip south!
                     else if (currentDir === 'south') targetDir = 'east';
                     else if (currentDir === 'east') targetDir = 'north';
-                }
-                
-                // Skip south if it leads to a north corridor
-                if (targetDir === 'south') {
-                    // Check if there's a north corridor at standard south exit position
-                    const chunkX = Math.floor(pos[0] / 32);
-                    const chunkZ = Math.floor(pos[2] / 32);
-                    const localX = 15 - (chunkX * 32);
-                    const southCheckZ = Math.floor(pos[2]) - 1;
-                    
-                    if (noa.world.getBlockID(chunkX * 32 + 15, 0, southCheckZ) === corridorNorthID) {
-                        console.log('Skipping south - leads to north corridor');
-                        // Skip to next direction
-                        if (noa.inputs.state.right) {
-                            targetDir = 'west'; // south -> west when turning right
-                        } else {
-                            targetDir = 'east'; // south -> east when turning left
-                        }
-                    }
                 }
                 
                 // Get the heading for target direction
@@ -887,13 +868,11 @@ function setupNoaEngine() {
                 } else if (targetDir === 'east') {
                     // East exit is always at z=13 (relative to chunk)
                     targetExit = { x: pos[0], z: chunkZ * 32 + 13 + 0.5 };
-                } else if (targetDir === 'south') {
-                    // South exit is always at x=15 (relative to chunk)
-                    targetExit = { x: chunkX * 32 + 15 + 0.5, z: pos[2] };
                 } else if (targetDir === 'west') {
                     // West exit is always at z=17 (relative to chunk)
                     targetExit = { x: pos[0], z: chunkZ * 32 + 17 + 0.5 };
                 }
+                // Never exit south - rooms only have E/N/W exits!
                 
                 console.log('Turning:', currentDir, '->', targetDir, 'heading:', targetHeading.toFixed(2));
                 console.log('Available exits:', Object.keys(roomInfo.exits).filter(dir => roomInfo.exits[dir] !== null));
