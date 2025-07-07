@@ -851,11 +851,6 @@ function setupNoaEngine() {
         }
         
         if (intersections.length > 0) {
-            console.log(`[Chunk ${chunkX},${chunkZ}] Found ${intersections.length} corridor intersection(s):`);
-            intersections.forEach(inter => {
-                console.log(`  - ${inter.type} intersection at world pos (${inter.worldX}, ${inter.worldZ}), local pos (${inter.localX}, ${inter.localZ})`);
-            });
-            
             // Enforce walls for corridors at intersections
             // This happens after all other generation to ensure walls are placed correctly
             intersections.forEach(inter => {
@@ -873,7 +868,6 @@ function setupNoaEngine() {
                             // Wall at z=11 for y=1 and y=2
                             data.set(x, 1, z - 1, dirtID);
                             data.set(x, 2, z - 1, dirtID);
-                            console.log(`  - Placed north wall for red corridor at local (${x}, 1-2, ${z-1})`);
                         }
                         
                         // Place wall to the south (at z+1 if z=14)
@@ -881,7 +875,6 @@ function setupNoaEngine() {
                             // Wall at z=15 for y=1 and y=2
                             data.set(x, 1, z + 1, dirtID);
                             data.set(x, 2, z + 1, dirtID);
-                            console.log(`  - Placed south wall for red corridor at local (${x}, 1-2, ${z+1})`);
                         }
                     }
                 } else if (inter.type === 'yellow-blue') {
@@ -895,7 +888,6 @@ function setupNoaEngine() {
                             // Wall at z=15 for y=1 and y=2
                             data.set(x, 1, z - 1, dirtID);
                             data.set(x, 2, z - 1, dirtID);
-                            console.log(`  - Placed north wall for yellow corridor at local (${x}, 1-2, ${z-1})`);
                         }
                         
                         // Place wall to the south (at z+1 if z=18)
@@ -903,7 +895,6 @@ function setupNoaEngine() {
                             // Wall at z=19 for y=1 and y=2
                             data.set(x, 1, z + 1, dirtID);
                             data.set(x, 2, z + 1, dirtID);
-                            console.log(`  - Placed south wall for yellow corridor at local (${x}, 1-2, ${z+1})`);
                         }
                     }
                 }
@@ -1067,8 +1058,24 @@ function setupNoaEngine() {
         if (needsStrafe) {
             const physics = noa.entities.getPhysics(noa.playerEntity);
             if (physics && physics.body) {
+                // Calculate distance to target for dampening
+                let distance = 0;
+                if (facingDir === 'north') {
+                    distance = Math.abs(targetExit.x - pos[0]);
+                } else if (facingDir === 'east' || facingDir === 'west') {
+                    distance = Math.abs(targetExit.z - pos[2]);
+                }
+                
+                // Apply dampening when close to target
+                let forceMult = 1.0;
+                if (distance < 0.5) {
+                    forceMult = distance / 0.5; // Linear dampening from 0.5 blocks away
+                }
+                
                 // Apply strong force for strafe movement
-                const strafeForce = 80; // Strong force for 2x speed
+                const baseStrafeForce = 320; // 4x increased speed (was 80)
+                const strafeForce = baseStrafeForce * forceMult;
+                
                 physics.body.applyForce([
                     strafeDir[0] * strafeForce,
                     0,
@@ -1081,7 +1088,24 @@ function setupNoaEngine() {
                 }
             }
         } else {
-            // Already aligned
+            // Already aligned - apply stabilization
+            const physics = noa.entities.getPhysics(noa.playerEntity);
+            if (physics && physics.body) {
+                const velocity = physics.body.velocity;
+                
+                // Cancel lateral velocity when aligned
+                if (facingDir === 'north') {
+                    // Cancel X velocity
+                    if (Math.abs(velocity[0]) > 0.1) {
+                        physics.body.velocity[0] *= 0.5; // Dampen velocity
+                    }
+                } else if (facingDir === 'east' || facingDir === 'west') {
+                    // Cancel Z velocity
+                    if (Math.abs(velocity[2]) > 0.1) {
+                        physics.body.velocity[2] *= 0.5; // Dampen velocity
+                    }
+                }
+            }
         }
     }, 50); // Run frequently for smooth movement
     
