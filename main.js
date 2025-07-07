@@ -1994,14 +1994,14 @@ setInterval(() => {
         
         if (distance < 1) { // Hit player
             damagePlayer(5);
-            noa.entities.remove(proj.entity);
+            noa.entities.deleteEntity(proj.entity);
             console.log('Player hit by projectile! -5 HP');
             return false;
         }
         
         // Check lifetime
         if (currentTime - proj.startTime > proj.lifetime) {
-            noa.entities.remove(proj.entity);
+            noa.entities.deleteEntity(proj.entity);
             return false;
         }
         
@@ -2013,7 +2013,7 @@ setInterval(() => {
         );
         
         if (blockAt !== 0) { // Hit something solid
-            noa.entities.remove(proj.entity);
+            noa.entities.deleteEntity(proj.entity);
             return false;
         }
         
