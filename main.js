@@ -501,6 +501,16 @@ function setupNoaEngine() {
     noa.camera.zoomDistance = 10;  // Increased distance for better view
     noa.camera.pitch = 0.333;      // Positive pitch looks up (about 19 degrees)
     
+    // Disable camera collision avoidance - always stay at fixed distance
+    noa.camera.updateAfterEntityRenderSystems = function() {
+        // Override the default behavior - no obstruction checking
+        // Camera will always stay at zoomDistance behind player
+        this.currentZoom = this.zoomDistance;
+    };
+    
+    // Also ensure immediate zoom updates (no smoothing)
+    noa.camera.zoomSpeed = 1.0;  // Instant zoom changes
+    
     console.log('Updated camera parameters:', {
         zoomDistance: noa.camera.zoomDistance,
         pitch: noa.camera.pitch
