@@ -5,6 +5,7 @@ export * from '@unicitylabs/state-transition-sdk';
 export { TokenJsonSerializer } from '@unicitylabs/state-transition-sdk/lib/serializer/json/token/TokenJsonSerializer.js';
 export { TransactionJsonSerializer } from '@unicitylabs/state-transition-sdk/lib/serializer/json/transaction/TransactionJsonSerializer.js';
 export { waitInclusionProof } from '@unicitylabs/state-transition-sdk/lib/utils/InclusionProofUtils.js';
+export { Commitment } from '@unicitylabs/state-transition-sdk/lib/transaction/Commitment.js';
 
 // Commons exports - Signing
 export { SigningService } from '@unicitylabs/commons/lib/signing/SigningService.js';

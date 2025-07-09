@@ -1807,19 +1807,70 @@ function startPeriodicUpdates() {
         };
         
         // Create new token state data
-        const stateData = new TextEncoder().encode(JSON.stringify(newState));
-        const dataHash = await new window.UnicitySDK.DataHasher(window.UnicitySDK.HashAlgorithm.SHA256).update(stateData).digest();
+        let stateData = new TextEncoder().encode(JSON.stringify(newState));
+        let dataHash = await new window.UnicitySDK.DataHasher(window.UnicitySDK.HashAlgorithm.SHA256).update(stateData).digest();
         
         // Create aggregator client for Unicity network
         const aggregatorClient = new window.UnicitySDK.AggregatorClient('https://gateway-test.unicity.network:443');
         const client = new window.UnicitySDK.StateTransitionClient(aggregatorClient);
         
-        try {
+        // Check if we have a pending transaction from a previous attempt
+        const pendingTxKey = 'unicityRunner_pendingTransaction';
+        let pendingTx = localStorage.getItem(pendingTxKey);
+        
+        let commitment, newPredicate, newNonce, transactionData, savedStateData;
+        
+        if (pendingTx) {
+            // Recover from pending transaction
+            const pending = JSON.parse(pendingTx);
+            console.log('Found pending transaction, attempting to complete...');
+            
+            // Check if this is an old format without stateData
+            if (!pending.stateData) {
+                console.warn('Invalid pending transaction format (missing stateData), clearing...');
+                localStorage.removeItem(pendingTxKey);
+                pendingTx = null;
+            } else {
+                // Recreate objects from saved data
+                const predicateFactory = new window.UnicitySDK.PredicateJsonFactory();
+                newPredicate = await predicateFactory.create(
+                    playerToken.id,
+                    playerToken.type,
+                    pending.newPredicate
+                );
+                newNonce = window.UnicitySDK.HexConverter.decode(pending.newNonce);
+                
+                // Restore the state data
+                savedStateData = window.UnicitySDK.HexConverter.decode(pending.stateData);
+                
+                // Recreate transaction data from saved info
+                const salt = window.UnicitySDK.HexConverter.decode(pending.commitment.transactionData.salt);
+                const savedDataHash = window.UnicitySDK.DataHash.fromJSON(pending.commitment.transactionData.dataHash);
+                const message = window.UnicitySDK.HexConverter.decode(pending.commitment.transactionData.message);
+                
+                transactionData = await window.UnicitySDK.TransactionData.create(
+                    playerToken.state,
+                    pending.commitment.transactionData.recipientAddress,
+                    salt,
+                    savedDataHash,
+                    message,
+                    [] // no nametag tokens
+                );
+                
+                // Recreate commitment
+                commitment = await window.UnicitySDK.Commitment.create(transactionData, signingService);
+                
+                // Override stateData with the saved one
+                stateData = savedStateData;
+            }
+        }
+        
+        if (!pendingTx) {
             // Generate new nonce for one-time address
-            const newNonce = crypto.getRandomValues(new Uint8Array(32));
+            newNonce = crypto.getRandomValues(new Uint8Array(32));
             
             // Create new masked predicate with new nonce (one-time address)
-            const newPredicate = await window.UnicitySDK.MaskedPredicate.create(
+            newPredicate = await window.UnicitySDK.MaskedPredicate.create(
                 playerToken.id,
                 playerToken.type,
                 signingService,
@@ -1831,7 +1882,7 @@ function startPeriodicUpdates() {
             const recipient = await window.UnicitySDK.DirectAddress.create(newPredicate.reference);
             
             // Create transaction data for state update
-            const transactionData = await window.UnicitySDK.TransactionData.create(
+            transactionData = await window.UnicitySDK.TransactionData.create(
                 playerToken.state,
                 recipient.toString(),
                 crypto.getRandomValues(new Uint8Array(32)), // salt
@@ -1840,8 +1891,32 @@ function startPeriodicUpdates() {
                 [] // no nametag tokens
             );
             
-            // Create commitment and submit
-            const commitment = await window.UnicitySDK.Commitment.create(transactionData, signingService);
+            // Create commitment
+            commitment = await window.UnicitySDK.Commitment.create(transactionData, signingService);
+            
+            // Save pending transaction BEFORE submitting
+            // Use JSON serialization for commitment
+            const pendingData = {
+                commitment: {
+                    requestId: commitment.requestId.toJSON(),
+                    transactionData: {
+                        // We'll reconstruct this from the token state
+                        recipientAddress: recipient.toString(),
+                        salt: window.UnicitySDK.HexConverter.encode(transactionData.salt),
+                        dataHash: dataHash.toJSON(),
+                        message: window.UnicitySDK.HexConverter.encode(new TextEncoder().encode('State update'))
+                    }
+                },
+                newPredicate: newPredicate.toJSON(),
+                newNonce: window.UnicitySDK.HexConverter.encode(newNonce),
+                stateData: window.UnicitySDK.HexConverter.encode(stateData), // Save the actual state data
+                timestamp: Date.now()
+            };
+            localStorage.setItem(pendingTxKey, JSON.stringify(pendingData));
+        }
+        
+        try {
+            // Submit commitment
             const response = await client.submitCommitment(commitment);
             
             if (response.status !== window.UnicitySDK.SubmitCommitmentStatus.SUCCESS) {
@@ -1876,11 +1951,20 @@ function startPeriodicUpdates() {
                 newNonce
             );
             
+            // Clear pending transaction on success
+            localStorage.removeItem(pendingTxKey);
+            
             console.log('State transition submitted to Unicity network successfully');
         } catch (error) {
-            console.warn('Failed to submit to Unicity network, saving locally:', error);
-            // On error, just update local state without blockchain transaction
-            // This is not ideal for production but allows the game to continue
+            // Check for REQUEST_ID_EXISTS - this should never happen with our approach
+            if (error.message && error.message.includes('REQUEST_ID_EXISTS')) {
+                console.error('CRITICAL ERROR: REQUEST_ID_EXISTS - Transaction was lost!', error);
+                // Clear the pending transaction as it's unrecoverable
+                localStorage.removeItem(pendingTxKey);
+            } else {
+                console.warn('Failed to submit to Unicity network, will retry next time:', error);
+            }
+            throw error;
         }
         
         // Serialize and save locally
