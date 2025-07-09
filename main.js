@@ -447,7 +447,6 @@ async function initializePlayerToken() {
         console.log("Existing player token imported.", playerToken);
         console.log("Token state:", playerToken.state);
         console.log("Unlock predicate:", playerToken.state?.unlockPredicate);
-        console.log("Current nonce from predicate:", window.UnicitySDK.HexConverter.encode(nonce));
     } else {
         // New player flow
         await createNewPlayerToken();
@@ -1800,11 +1799,6 @@ function startPeriodicUpdates() {
         const privateKeyBytes = window.UnicitySDK.HexConverter.decode(localStorage.getItem('unicityRunner_privateKey'));
         const currentNonce = playerToken.state.unlockPredicate.nonce;
         signingService = await window.UnicitySDK.SigningService.createFromSecret(privateKeyBytes, currentNonce);
-        console.log("Synced signing service with current token nonce:", window.UnicitySDK.HexConverter.encode(currentNonce));
-        
-        // Validate that the signing service can unlock the current predicate
-        console.log("Current token predicate type:", playerToken.state.unlockPredicate.type);
-        console.log("Current token predicate reference:", playerToken.state.unlockPredicate.reference.toString());
         
         // Get current position
         const position = noa.entities.getPosition(noa.playerEntity);
@@ -1837,7 +1831,6 @@ function startPeriodicUpdates() {
         if (pendingTx) {
             // Recover from pending transaction
             const pending = JSON.parse(pendingTx);
-            console.log('Found pending transaction, attempting to complete...');
             
             // Check if this is an old format without stateData
             if (!pending.stateData) {
@@ -1895,21 +1888,7 @@ function startPeriodicUpdates() {
                 
                 // Recreate commitment using the current signing service
                 // (which has the nonce matching the current token's predicate)
-                console.log("Recovering pending transaction:");
-                console.log("- Current token predicate nonce:", 
-                    window.UnicitySDK.HexConverter.encode(playerToken.state.unlockPredicate.nonce));
-                if (pending.currentNonce) {
-                    console.log("- Saved current nonce from pending tx:", pending.currentNonce);
-                    console.log("- Nonces match:", 
-                        pending.currentNonce === window.UnicitySDK.HexConverter.encode(playerToken.state.unlockPredicate.nonce));
-                }
-                console.log("- New nonce for next predicate:", 
-                    window.UnicitySDK.HexConverter.encode(newNonce));
-                console.log("- Transaction recipient:", pending.commitment.transactionData.recipientAddress);
-                console.log("- Using signing service with nonce:", window.UnicitySDK.HexConverter.encode(signingService.nonce || playerToken.state.unlockPredicate.nonce));
-                
                 commitment = await window.UnicitySDK.Commitment.create(transactionData, signingService);
-                console.log("Recovered commitment authenticator:", commitment.authenticator);
                 
                 // Override stateData with the saved one
                 stateData = savedStateData;
@@ -1939,13 +1918,6 @@ function startPeriodicUpdates() {
             const recipient = await window.UnicitySDK.DirectAddress.create(newPredicate.reference);
             
             // Create transaction data for state update
-            console.log("Creating TransactionData:");
-            console.log("- Current playerToken:", playerToken);
-            console.log("- Current playerToken.state:", playerToken.state);
-            console.log("- Source state:", playerToken.state);
-            console.log("- Source state predicate:", playerToken.state.unlockPredicate.reference.toString());
-            console.log("- Source state predicate nonce:", window.UnicitySDK.HexConverter.encode(playerToken.state.unlockPredicate.nonce));
-            console.log("- Recipient address:", recipient.toString());
             
             transactionData = await window.UnicitySDK.TransactionData.create(
                 playerToken.state,
@@ -1957,18 +1929,7 @@ function startPeriodicUpdates() {
             );
             
             // Create commitment
-            console.log("Creating new commitment:");
-            console.log("- Current token predicate nonce:", 
-                window.UnicitySDK.HexConverter.encode(playerToken.state.unlockPredicate.nonce));
-            console.log("- Transaction recipient:", recipient.toString());
-            console.log("- New predicate reference:", newPredicate.reference.toString());
-            console.log("- New nonce for next predicate:", window.UnicitySDK.HexConverter.encode(newNonce));
-            
             commitment = await window.UnicitySDK.Commitment.create(transactionData, signingService);
-            console.log("Commitment created:", commitment);
-            console.log("Commitment authenticator:", commitment.authenticator);
-            console.log("Commitment transactionData:", commitment.transactionData);
-            console.log("Commitment transactionData authenticator:", commitment.transactionData?.authenticator);
             
             // Save pending transaction BEFORE submitting
             // Use JSON serialization for commitment
@@ -1985,7 +1946,6 @@ function startPeriodicUpdates() {
                 },
                 newPredicate: newPredicate.toJSON(),
                 newNonce: window.UnicitySDK.HexConverter.encode(newNonce),
-                currentNonce: window.UnicitySDK.HexConverter.encode(playerToken.state.unlockPredicate.nonce), // Save current nonce for debugging
                 stateData: window.UnicitySDK.HexConverter.encode(stateData), // Save the actual state data
                 timestamp: Date.now()
             };
@@ -1997,9 +1957,6 @@ function startPeriodicUpdates() {
             const response = await client.submitCommitment(commitment);
             
             if (response.status !== window.UnicitySDK.SubmitCommitmentStatus.SUCCESS) {
-                console.error("Commitment submission failed:", response);
-                console.error("Response status:", response.status);
-                console.error("Response details:", JSON.stringify(response, null, 2));
                 throw new Error(`Failed to submit transaction commitment: ${response.status}`);
             }
             
@@ -2010,36 +1967,13 @@ function startPeriodicUpdates() {
                 AbortSignal.timeout(10000), // 10 second timeout for updates
                 1000 // Check every second
             );
-            console.log("Inclusion proof received, creating transaction...");
             const transaction = await client.createTransaction(commitment, inclusionProof);
-            console.log("Transaction created:", transaction);
-            console.log("Transaction structure:");
-            console.log("- data:", transaction.data);
-            console.log("- data.sourceState:", transaction.data?.sourceState);
-            console.log("- data.sourceState.unlockPredicate:", transaction.data?.sourceState?.unlockPredicate);
-            console.log("- data.recipient:", transaction.data?.recipient);
-            console.log("- data.authenticator:", transaction.data?.authenticator);
             
             // Create new token state with new predicate
-            console.log("Creating new token state with predicate:", newPredicate.reference.toString());
             const newTokenState = await window.UnicitySDK.TokenState.create(
                 newPredicate,
                 stateData
             );
-            console.log("New token state created");
-            
-            // Log details before finishTransaction
-            console.log("About to call finishTransaction:");
-            console.log("- Current token ID:", playerToken.id.toString());
-            console.log("- Current token predicate:", playerToken.state.unlockPredicate.reference.toString());
-            console.log("- New predicate:", newPredicate.reference.toString());
-            console.log("- Transaction object:", transaction);
-            console.log("- Transaction data:", transaction.data);
-            console.log("- Transaction inclusionProof:", transaction.inclusionProof);
-            console.log("- Transaction inclusionProof authenticator:", transaction.inclusionProof?.authenticator);
-            console.log("- Transaction data recipient:", transaction.data?.recipient);
-            console.log("- Source state predicate type:", transaction.data?.sourceState?.unlockPredicate?.type);
-            console.log("- Source state predicate reference:", transaction.data?.sourceState?.unlockPredicate?.reference?.toString());
             
             // Finish transaction to update token
             try {
@@ -2049,8 +1983,6 @@ function startPeriodicUpdates() {
                     transaction
                 );
             } catch (finishError) {
-                console.error("finishTransaction failed:", finishError);
-                console.error("Error details:", finishError.message);
                 throw finishError;
             }
             
