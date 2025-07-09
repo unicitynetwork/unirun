@@ -2113,6 +2113,9 @@ function fireProjectile(fromPos, toPos) {
 
 // Check projectile collisions and cleanup
 setInterval(() => {
+    // Skip if engine not initialized yet
+    if (!noa || !noa.playerEntity) return;
+    
     const currentTime = Date.now();
     const playerPos = noa.entities.getPosition(noa.playerEntity);
     

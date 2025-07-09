@@ -25,3 +25,4 @@ export { HexConverter } from '@unicitylabs/commons/lib/util/HexConverter.js';
 export { InclusionProof, InclusionProofVerificationStatus } from '@unicitylabs/commons/lib/api/InclusionProof.js';
 export { RequestId } from '@unicitylabs/commons/lib/api/RequestId.js';
 export { Authenticator } from '@unicitylabs/commons/lib/api/Authenticator.js';
+export { SubmitCommitmentStatus } from '@unicitylabs/commons/lib/api/SubmitCommitmentResponse.js';
