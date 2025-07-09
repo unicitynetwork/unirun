@@ -432,42 +432,16 @@ async function initializePlayerToken() {
         // Load existing token
         const tokenData = JSON.parse(savedTokenString);
         
-        // Recreate signing service
+        // Use TokenFactory to recreate the token from stored data
+        const predicateFactory = new window.UnicitySDK.PredicateJsonFactory();
+        const tokenJsonSerializer = new window.UnicitySDK.TokenJsonSerializer(predicateFactory);
+        const tokenFactory = new window.UnicitySDK.TokenFactory(tokenJsonSerializer);
+        playerToken = await tokenFactory.create(tokenData);
+        
+        // Recreate signing service with the nonce from the token's predicate
         const privateKeyBytes = window.UnicitySDK.HexConverter.decode(savedPrivateKey);
-        signingService = new window.UnicitySDK.SigningService(privateKeyBytes);
-        
-        // Recreate token components
-        const tokenId = window.UnicitySDK.TokenId.create(window.UnicitySDK.HexConverter.decode(tokenData.id));
-        const tokenType = window.UnicitySDK.TokenType.create(window.UnicitySDK.HexConverter.decode(tokenData.type));
-        
-        // Recreate predicate based on type
-        console.log('Loading predicate from:', tokenData.state.predicate);
-        let predicate;
-        if (tokenData.state.predicate.type === 'UNMASKED') {
-            predicate = await window.UnicitySDK.UnmaskedPredicate.fromJSON(tokenId, tokenType, tokenData.state.predicate);
-        } else if (tokenData.state.predicate.type === 'MASKED') {
-            predicate = await window.UnicitySDK.MaskedPredicate.fromJSON(tokenId, tokenType, tokenData.state.predicate);
-        } else {
-            throw new Error('Unknown predicate type: ' + tokenData.state.predicate.type);
-        }
-        console.log('Recreated predicate:', predicate);
-        
-        // Recreate token state
-        const stateData = tokenData.state.data ? window.UnicitySDK.HexConverter.decode(tokenData.state.data) : null;
-        const stateHash = window.UnicitySDK.DataHash.fromJSON(tokenData.state.hash);
-        const tokenState = new window.UnicitySDK.TokenState(predicate, stateData, stateHash);
-        
-        // Recreate the token
-        playerToken = new window.UnicitySDK.Token(
-            tokenId,
-            tokenType,
-            null, // token data
-            new window.UnicitySDK.TokenCoinData([]), // empty coins
-            tokenState,
-            [], // transactions
-            [], // nametag tokens
-            tokenData.version || window.UnicitySDK.TOKEN_VERSION
-        );
+        const nonce = playerToken.state.unlockPredicate.nonce;
+        signingService = await window.UnicitySDK.SigningService.createFromSecret(privateKeyBytes, nonce);
         
         console.log("Existing player token imported.", playerToken);
         console.log("Token state:", playerToken.state);
@@ -495,8 +469,11 @@ async function createNewPlayerToken() {
     const privateKeyBytes = new Uint8Array(32);
     crypto.getRandomValues(privateKeyBytes);
     
-    // Create signing service with private key
-    signingService = new window.UnicitySDK.SigningService(privateKeyBytes);
+    // Generate nonce for signing service
+    const nonce = crypto.getRandomValues(new Uint8Array(32));
+    
+    // Create signing service with private key and nonce
+    signingService = await window.UnicitySDK.SigningService.createFromSecret(privateKeyBytes, nonce);
     
     // Get public key from signing service
     const publicKey = signingService.publicKey;
@@ -505,48 +482,80 @@ async function createNewPlayerToken() {
     const tokenId = window.UnicitySDK.TokenId.create(crypto.getRandomValues(new Uint8Array(32)));
     const tokenType = window.UnicitySDK.TokenType.create(new Uint8Array([1])); // Simple type ID
     
-    // Create predicate (unmasked for simplicity)
-    const predicate = await window.UnicitySDK.UnmaskedPredicate.create(
+    // Create predicate (use MaskedPredicate as shown in README examples)
+    const predicate = await window.UnicitySDK.MaskedPredicate.create(
         tokenId,
         tokenType,
-        signingService, // pass the signing service instead of individual params
+        signingService,
         window.UnicitySDK.HashAlgorithm.SHA256,
-        crypto.getRandomValues(new Uint8Array(16)) // nonce
+        nonce // MaskedPredicate uses nonce, not salt
     );
     
-    // Create token state
+    // Create token state data (this will be stored in the token state)
     const stateData = new TextEncoder().encode(JSON.stringify(initialState));
-    const tokenState = await window.UnicitySDK.TokenState.create(predicate, stateData);
     
-    // Create the token
-    playerToken = new window.UnicitySDK.Token(
+    // Create the data hash of the state data
+    const dataHash = await new window.UnicitySDK.DataHasher(window.UnicitySDK.HashAlgorithm.SHA256).update(stateData).digest();
+    
+    // Create aggregator client for Unicity network
+    const aggregatorClient = new window.UnicitySDK.AggregatorClient('https://gateway-test.unicity.network:443');
+    const client = new window.UnicitySDK.StateTransitionClient(aggregatorClient);
+    
+    // Create mint transaction data
+    const salt = crypto.getRandomValues(new Uint8Array(32));
+    const recipient = await window.UnicitySDK.DirectAddress.create(predicate.reference);
+    
+    const mintTransactionData = await window.UnicitySDK.MintTransactionData.create(
         tokenId,
         tokenType,
-        null, // token data
-        new window.UnicitySDK.TokenCoinData([]), // empty coins
-        tokenState,
-        [], // transactions
-        [], // nametag tokens
-        window.UnicitySDK.TOKEN_VERSION
+        new Uint8Array(0), // tokenData (immutable data, not the state data)
+        null, // no coins (use null instead of empty TokenCoinData)
+        recipient.toString(),
+        salt,
+        dataHash, // hash of the state data
+        null // reason
     );
     
-    // Store private key (hex encoded)
-    localStorage.setItem('unicityRunner_privateKey', window.UnicitySDK.HexConverter.encode(privateKeyBytes));
-    
-    // Serialize and save token
-    const tokenData = {
-        id: tokenId.toJSON(),
-        type: tokenType.toJSON(),
-        state: {
-            predicate: predicate.toJSON(),
-            data: window.UnicitySDK.HexConverter.encode(stateData),
-            hash: tokenState.hash.toJSON()
-        },
-        version: playerToken.version
-    };
-    localStorage.setItem('unicityRunner_playerToken', JSON.stringify(tokenData));
-    
-    console.log("New player token created.", playerToken);
+    try {
+        // Submit mint transaction to Unicity network
+        console.log('Submitting mint transaction to Unicity network...');
+        const mintCommitment = await client.submitMintTransaction(mintTransactionData);
+        
+        // Wait for inclusion proof using SDK utility
+        console.log('Waiting for inclusion proof...');
+        const inclusionProof = await window.UnicitySDK.waitInclusionProof(
+            client,
+            mintCommitment,
+            AbortSignal.timeout(30000), // 30 second timeout
+            1000 // Check every second
+        );
+        console.log('Inclusion proof received and verified');
+        
+        // Create the transaction with inclusion proof
+        const mintTransaction = await client.createTransaction(mintCommitment, inclusionProof);
+        
+        // Create token state
+        const tokenState = await window.UnicitySDK.TokenState.create(predicate, stateData);
+        
+        // Create the token with proper mint transaction
+        playerToken = new window.UnicitySDK.Token(
+            tokenState,
+            mintTransaction,
+            [] // additional transactions
+        );
+        
+        // Store private key (hex encoded)
+        localStorage.setItem('unicityRunner_privateKey', window.UnicitySDK.HexConverter.encode(privateKeyBytes));
+        
+        // Serialize and save token using the SDK's built-in serialization
+        const tokenJson = playerToken.toJSON();
+        localStorage.setItem('unicityRunner_playerToken', JSON.stringify(tokenJson));
+        
+        console.log('Player token minted successfully on Unicity network!', playerToken);
+    } catch (error) {
+        console.error('Failed to mint token on Unicity network:', error);
+        throw error;
+    }
 }
 
 // Get player state from token
@@ -1797,37 +1806,86 @@ function startPeriodicUpdates() {
             lastUpdate: Date.now()
         };
         
-        // Create new token state
+        // Create new token state data
         const stateData = new TextEncoder().encode(JSON.stringify(newState));
-        const newTokenState = await window.UnicitySDK.TokenState.create(
-            playerToken.state.unlockPredicate,
-            stateData
-        );
+        const dataHash = await new window.UnicitySDK.DataHasher(window.UnicitySDK.HashAlgorithm.SHA256).update(stateData).digest();
         
-        // Update token with new state
-        playerToken = new window.UnicitySDK.Token(
-            playerToken.id,
-            playerToken.type,
-            playerToken.data,
-            playerToken.coins,
-            newTokenState,
-            playerToken._transactions,
-            playerToken._nametagTokens,
-            playerToken.version
-        );
+        // Create aggregator client for Unicity network
+        const aggregatorClient = new window.UnicitySDK.AggregatorClient('https://gateway-test.unicity.network:443');
+        const client = new window.UnicitySDK.StateTransitionClient(aggregatorClient);
         
-        // Serialize and save
-        const tokenData = {
-            id: playerToken.id.toJSON(),
-            type: playerToken.type.toJSON(),
-            state: {
-                predicate: playerToken.state.unlockPredicate.toJSON(),
-                data: window.UnicitySDK.HexConverter.encode(stateData),
-                hash: newTokenState.hash.toJSON()
-            },
-            version: playerToken.version
-        };
-        localStorage.setItem('unicityRunner_playerToken', JSON.stringify(tokenData));
+        try {
+            // Generate new nonce for one-time address
+            const newNonce = crypto.getRandomValues(new Uint8Array(32));
+            
+            // Create new masked predicate with new nonce (one-time address)
+            const newPredicate = await window.UnicitySDK.MaskedPredicate.create(
+                playerToken.id,
+                playerToken.type,
+                signingService,
+                window.UnicitySDK.HashAlgorithm.SHA256,
+                newNonce
+            );
+            
+            // Create new recipient address from the new predicate
+            const recipient = await window.UnicitySDK.DirectAddress.create(newPredicate.reference);
+            
+            // Create transaction data for state update
+            const transactionData = await window.UnicitySDK.TransactionData.create(
+                playerToken.state,
+                recipient.toString(),
+                crypto.getRandomValues(new Uint8Array(32)), // salt
+                dataHash,
+                new TextEncoder().encode('State update'),
+                [] // no nametag tokens
+            );
+            
+            // Create commitment and submit
+            const commitment = await window.UnicitySDK.Commitment.create(transactionData, signingService);
+            const response = await client.submitCommitment(commitment);
+            
+            if (response.status !== window.UnicitySDK.SubmitCommitmentStatus.SUCCESS) {
+                throw new Error(`Failed to submit transaction commitment: ${response.status}`);
+            }
+            
+            // Wait for inclusion proof using SDK utility
+            const inclusionProof = await window.UnicitySDK.waitInclusionProof(
+                client,
+                commitment,
+                AbortSignal.timeout(10000), // 10 second timeout for updates
+                1000 // Check every second
+            );
+            const transaction = await client.createTransaction(commitment, inclusionProof);
+            
+            // Create new token state with new predicate
+            const newTokenState = await window.UnicitySDK.TokenState.create(
+                newPredicate,
+                stateData
+            );
+            
+            // Finish transaction to update token
+            playerToken = await client.finishTransaction(
+                playerToken,
+                newTokenState,
+                transaction
+            );
+            
+            // Update the signing service nonce for future transactions
+            signingService = await window.UnicitySDK.SigningService.createFromSecret(
+                window.UnicitySDK.HexConverter.decode(localStorage.getItem('unicityRunner_privateKey')),
+                newNonce
+            );
+            
+            console.log('State transition submitted to Unicity network successfully');
+        } catch (error) {
+            console.warn('Failed to submit to Unicity network, saving locally:', error);
+            // On error, just update local state without blockchain transaction
+            // This is not ideal for production but allows the game to continue
+        }
+        
+        // Serialize and save locally
+        const tokenJson = playerToken.toJSON();
+        localStorage.setItem('unicityRunner_playerToken', JSON.stringify(tokenJson));
         
         console.log('State updated and saved');
     }, 10000); // Every 10 seconds

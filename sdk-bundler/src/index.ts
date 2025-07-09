@@ -1,6 +1,11 @@
 // Export everything from the Unicity SDK
 export * from '@unicitylabs/state-transition-sdk';
 
+// Additional SDK exports that might not be in the main export
+export { TokenJsonSerializer } from '@unicitylabs/state-transition-sdk/lib/serializer/json/token/TokenJsonSerializer.js';
+export { TransactionJsonSerializer } from '@unicitylabs/state-transition-sdk/lib/serializer/json/transaction/TransactionJsonSerializer.js';
+export { waitInclusionProof } from '@unicitylabs/state-transition-sdk/lib/utils/InclusionProofUtils.js';
+
 // Commons exports - Signing
 export { SigningService } from '@unicitylabs/commons/lib/signing/SigningService.js';
 export { Signature } from '@unicitylabs/commons/lib/signing/Signature.js';
