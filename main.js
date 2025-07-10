@@ -488,7 +488,13 @@ async function initializePlayerToken() {
         console.log("Token state:", playerToken.state);
         console.log("Unlock predicate:", playerToken.state?.unlockPredicate);
         
+        // Initialize status counters from token history
         tokenStatus.initialized = true;
+        // Count transactions: 1 for mint + number of state updates
+        const transactionCount = (playerToken._transactions?.length || 0) + 1; // +1 for the initial mint
+        tokenStatus.totalSubmissions = transactionCount;
+        tokenStatus.successfulSubmissions = transactionCount;
+        tokenStatus.lastUpdateTime = Date.now(); // Approximate, since we don't store exact times
         updateTokenStatusDisplay();
     } else {
         // New player flow
