@@ -21,7 +21,44 @@ let droneEntity = null;
 let projectiles = [];
 let currentPlayerHealth = 100; // Track current health during gameplay
 
+// Token status tracking
+let tokenStatus = {
+    initialized: false,
+    totalSubmissions: 0,
+    successfulSubmissions: 0,
+    pendingTransaction: false,
+    lastUpdateTime: null,
+    lastError: null
+};
+
 // No custom meshes needed - noa only supports full block collision
+
+// Update token status display
+function updateTokenStatusDisplay() {
+    const statusContent = document.getElementById('tokenStatusContent');
+    if (!statusContent) return;
+    
+    let html = '';
+    
+    if (!tokenStatus.initialized) {
+        html = '<div class="status-line">Initializing...</div>';
+    } else {
+        html += `<div class="status-line">Submissions: <span class="success">${tokenStatus.successfulSubmissions}</span> / ${tokenStatus.totalSubmissions}</div>`;
+        
+        if (tokenStatus.pendingTransaction) {
+            html += '<div class="status-line pending">⏳ Pending transaction...</div>';
+        } else if (tokenStatus.lastUpdateTime) {
+            const secondsAgo = Math.floor((Date.now() - tokenStatus.lastUpdateTime) / 1000);
+            html += `<div class="status-line">Last update: ${secondsAgo}s ago</div>`;
+        }
+        
+        if (tokenStatus.lastError) {
+            html += `<div class="status-line error">⚠️ ${tokenStatus.lastError}</div>`;
+        }
+    }
+    
+    statusContent.innerHTML = html;
+}
 
 // Initialize the game when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
@@ -30,6 +67,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function initializeGame() {
     console.log('Initializing Unicity Runner...');
+    
+    // Update status display periodically
+    setInterval(updateTokenStatusDisplay, 1000);
     
     // Set up reset button
     const resetButton = document.getElementById('resetPlayer');
@@ -447,6 +487,9 @@ async function initializePlayerToken() {
         console.log("Existing player token imported.", playerToken);
         console.log("Token state:", playerToken.state);
         console.log("Unlock predicate:", playerToken.state?.unlockPredicate);
+        
+        tokenStatus.initialized = true;
+        updateTokenStatusDisplay();
     } else {
         // New player flow
         await createNewPlayerToken();
@@ -554,8 +597,18 @@ async function createNewPlayerToken() {
         localStorage.setItem('unicityRunner_playerToken', JSON.stringify(tokenJson));
         
         console.log('Player token minted successfully on Unicity network!', playerToken);
+        
+        tokenStatus.initialized = true;
+        tokenStatus.totalSubmissions = 1;
+        tokenStatus.successfulSubmissions = 1;
+        tokenStatus.lastUpdateTime = Date.now();
+        updateTokenStatusDisplay();
     } catch (error) {
         console.error('Failed to mint token on Unicity network:', error);
+        tokenStatus.initialized = true;
+        tokenStatus.totalSubmissions = 1;
+        tokenStatus.lastError = 'Mint failed';
+        updateTokenStatusDisplay();
         throw error;
     }
 }
@@ -1828,6 +1881,10 @@ function startPeriodicUpdates() {
         
         let commitment, newPredicate, newNonce, transactionData, savedStateData;
         
+        // Update pending status
+        tokenStatus.pendingTransaction = !!pendingTx;
+        updateTokenStatusDisplay();
+        
         if (pendingTx) {
             // Recover from pending transaction
             const pending = JSON.parse(pendingTx);
@@ -1851,6 +1908,9 @@ function startPeriodicUpdates() {
                     console.warn(`Clearing stuck pending transaction (age: ${Math.floor(age/1000)}s, retries: ${pending.retryCount})`);
                     localStorage.removeItem(pendingTxKey);
                     pendingTx = null;
+                    tokenStatus.pendingTransaction = false;
+                    tokenStatus.lastError = 'Pending transaction expired';
+                    updateTokenStatusDisplay();
                 } else {
                     // Increment retry count
                     pending.retryCount++;
@@ -1950,6 +2010,10 @@ function startPeriodicUpdates() {
                 timestamp: Date.now()
             };
             localStorage.setItem(pendingTxKey, JSON.stringify(pendingData));
+            
+            // Update status to show pending
+            tokenStatus.pendingTransaction = true;
+            updateTokenStatusDisplay();
         }
         
         try {
@@ -1995,17 +2059,31 @@ function startPeriodicUpdates() {
             
             console.log('State transition submitted to Unicity network successfully');
             
+            // Update status
+            tokenStatus.totalSubmissions++;
+            tokenStatus.successfulSubmissions++;
+            tokenStatus.pendingTransaction = false;
+            tokenStatus.lastUpdateTime = Date.now();
+            tokenStatus.lastError = null;
+            updateTokenStatusDisplay();
+            
             // Serialize and save the updated token locally (only on success)
             const tokenJson = playerToken.toJSON();
             localStorage.setItem('unicityRunner_playerToken', JSON.stringify(tokenJson));
             
             console.log('State updated and saved');
         } catch (error) {
+            // Update status for failure
+            tokenStatus.totalSubmissions++;
+            tokenStatus.lastError = error.message || 'Transaction failed';
+            updateTokenStatusDisplay();
+            
             // Check for REQUEST_ID_EXISTS - this should never happen with our approach
             if (error.message && error.message.includes('REQUEST_ID_EXISTS')) {
                 console.error('CRITICAL ERROR: REQUEST_ID_EXISTS - Transaction was lost!', error);
                 // Clear the pending transaction as it's unrecoverable
                 localStorage.removeItem(pendingTxKey);
+                tokenStatus.pendingTransaction = false;
             } else {
                 console.warn('Failed to submit to Unicity network, will retry next time:', error);
             }

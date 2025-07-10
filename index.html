@@ -38,11 +38,50 @@
             font-weight: bold;
             text-align: center;
         }
+        #tokenStatus {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            padding: 10px 20px;
+            font-family: sans-serif;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            border-radius: 5px;
+            border: 2px solid #444;
+            min-width: 300px;
+            text-align: center;
+            font-size: 14px;
+        }
+        #tokenStatus .status-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+            color: #88ccff;
+        }
+        #tokenStatus .status-line {
+            margin: 3px 0;
+        }
+        #tokenStatus .pending {
+            color: #ffaa33;
+        }
+        #tokenStatus .success {
+            color: #33ff88;
+        }
+        #tokenStatus .error {
+            color: #ff5555;
+        }
     </style>
 </head>
 <body>
     <div id="app"></div>
     <button id="resetPlayer">Reset Player</button>
+    <div id="tokenStatus">
+        <div class="status-title">Token Status</div>
+        <div id="tokenStatusContent">
+            <div class="status-line">Initializing...</div>
+        </div>
+    </div>
     <div id="healthDisplay">
         <div id="healthText">Health: 100/100</div>
         <div id="healthBar">
