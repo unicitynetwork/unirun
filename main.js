@@ -4,11 +4,16 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
+const GAMEDEV_VERSION = 'dev00020'; // Version for chunk token ID generation
+const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
 let noa;
 let playerToken;
 let signingService;
+
+// Track chunks being tokenized to prevent concurrent processing
+const chunksBeingTokenized = new Map(); // key: "x,z", value: Promise
 
 // Block IDs (will be set during engine setup)
 let roomFloorID;
@@ -67,6 +72,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function initializeGame() {
     console.log('Initializing Unicity Runner...');
+    
+    // Check for gamedev version change and clear chunk tokens if needed
+    checkGamedevVersionAndClearChunks();
     
     // Update status display periodically
     setInterval(updateTokenStatusDisplay, 1000);
@@ -236,6 +244,723 @@ function getRoomExits(x, z, seed) {
     
     return { east, north, west };
 }
+
+// ============== CHUNK TOKENIZATION FUNCTIONS ==============
+
+// Generate deterministic token ID for a chunk
+async function generateChunkTokenId(chunkX, chunkZ, worldSeed, gamedevVersion) {
+    // Create a deterministic string from chunk coordinates, world seed, and version
+    const chunkIdentifier = `chunk_${worldSeed}_${chunkX}_${chunkZ}_${gamedevVersion}`;
+    
+    // Use Unicity SDK's DataHasher for proper hashing
+    const encoder = new TextEncoder();
+    const data = encoder.encode(chunkIdentifier);
+    
+    const dataHash = await new window.UnicitySDK.DataHasher(
+        window.UnicitySDK.HashAlgorithm.SHA256
+    ).update(data).digest();
+    
+    // Return the hash data as the token ID bytes
+    return dataHash.data;
+}
+
+// Generate deterministic nonce for chunk signer service
+async function generateChunkNonce(chunkX, chunkZ, worldSeed) {
+    const nonceIdentifier = `chunk_nonce_${worldSeed}_${chunkX}_${chunkZ}`;
+    
+    // Use Unicity SDK's DataHasher for proper hashing
+    const encoder = new TextEncoder();
+    const data = encoder.encode(nonceIdentifier);
+    
+    const dataHash = await new window.UnicitySDK.DataHasher(
+        window.UnicitySDK.HashAlgorithm.SHA256
+    ).update(data).digest();
+    
+    // Return the hash data as the nonce
+    return dataHash.data;
+}
+
+// Get localStorage key for chunk token data
+function getChunkStorageKey(chunkX, chunkZ, dataType) {
+    return `unicityRunner_chunk_${chunkX}_${chunkZ}_${dataType}`;
+}
+
+// Load chunk token data from localStorage
+function loadChunkTokenData(chunkX, chunkZ) {
+    const tokenKey = getChunkStorageKey(chunkX, chunkZ, 'token');
+    const commitmentKey = getChunkStorageKey(chunkX, chunkZ, 'commitment');
+    const stateKey = getChunkStorageKey(chunkX, chunkZ, 'state');
+    
+    const tokenString = localStorage.getItem(tokenKey);
+    const commitmentString = localStorage.getItem(commitmentKey);
+    const stateString = localStorage.getItem(stateKey);
+    
+    return {
+        token: tokenString ? JSON.parse(tokenString) : null,
+        commitment: commitmentString ? JSON.parse(commitmentString) : null,
+        state: stateString ? JSON.parse(stateString) : null
+    };
+}
+
+// Save chunk token data to localStorage
+function saveChunkTokenData(chunkX, chunkZ, data) {
+    if (data.token) {
+        const tokenKey = getChunkStorageKey(chunkX, chunkZ, 'token');
+        localStorage.setItem(tokenKey, JSON.stringify(data.token));
+    }
+    
+    if (data.commitment) {
+        const commitmentKey = getChunkStorageKey(chunkX, chunkZ, 'commitment');
+        localStorage.setItem(commitmentKey, JSON.stringify(data.commitment));
+    }
+    
+    if (data.state) {
+        const stateKey = getChunkStorageKey(chunkX, chunkZ, 'state');
+        localStorage.setItem(stateKey, JSON.stringify(data.state));
+    }
+}
+
+// Clear chunk token data from localStorage
+function clearChunkTokenData(chunkX, chunkZ) {
+    const tokenKey = getChunkStorageKey(chunkX, chunkZ, 'token');
+    const commitmentKey = getChunkStorageKey(chunkX, chunkZ, 'commitment');
+    const stateKey = getChunkStorageKey(chunkX, chunkZ, 'state');
+    const pendingKey = getChunkStorageKey(chunkX, chunkZ, 'pending');
+    
+    localStorage.removeItem(tokenKey);
+    localStorage.removeItem(commitmentKey);
+    localStorage.removeItem(stateKey);
+    localStorage.removeItem(pendingKey);
+}
+
+// Create or recover chunk token
+async function ensureChunkToken(chunkX, chunkZ) {
+    const chunkKey = `${chunkX},${chunkZ}`;
+    
+    // Check if this chunk is already being tokenized (in-memory)
+    if (chunksBeingTokenized.has(chunkKey)) {
+        console.log(`Chunk (${chunkX}, ${chunkZ}) is already being tokenized, waiting...`);
+        return await chunksBeingTokenized.get(chunkKey);
+    }
+    
+    // SYNCHRONOUS CHECK AND SET - critical section
+    // Check for pending state BEFORE creating the promise
+    const pendingKey = getChunkStorageKey(chunkX, chunkZ, 'pending');
+    const existingPending = localStorage.getItem(pendingKey);
+    
+    if (existingPending) {
+        const pending = JSON.parse(existingPending);
+        // Always skip if there's a pending token - don't clear stale ones
+        // This prevents duplicate submissions even after long game sessions
+        console.log(`Chunk (${chunkX}, ${chunkZ}) has a pending token (age: ${Math.floor((Date.now() - pending.timestamp) / 1000)}s), skipping...`);
+        // Return a resolved promise with null
+        const skipPromise = Promise.resolve(null);
+        chunksBeingTokenized.set(chunkKey, skipPromise);
+        setTimeout(() => chunksBeingTokenized.delete(chunkKey), 100); // Clean up quickly
+        return skipPromise;
+    }
+    
+    // Mark as pending IMMEDIATELY (synchronously) before any async work
+    localStorage.setItem(pendingKey, JSON.stringify({
+        timestamp: Date.now(),
+        sessionId: Date.now() + Math.random() // Unique session identifier
+    }));
+    
+    // Create a promise for this chunk tokenization
+    const tokenizationPromise = (async () => {
+        try {
+            // Load existing data
+            const existingData = loadChunkTokenData(chunkX, chunkZ);
+            
+            // If token exists, recreate it from saved data
+            if (existingData.token) {
+                try {
+                    // Use TokenFactory to recreate the token from stored data
+                    const predicateFactory = new window.UnicitySDK.PredicateJsonFactory();
+                    const tokenJsonSerializer = new window.UnicitySDK.TokenJsonSerializer(predicateFactory);
+                    const tokenFactory = new window.UnicitySDK.TokenFactory(tokenJsonSerializer);
+                    const chunkToken = await tokenFactory.create(existingData.token);
+                    
+                    // Clear pending state since we have a token
+                    localStorage.removeItem(pendingKey);
+                    return chunkToken;
+                } catch (error) {
+                    console.error(`Failed to recreate chunk token for (${chunkX}, ${chunkZ}):`, error);
+                    // Clear invalid token data
+                    clearChunkTokenData(chunkX, chunkZ);
+                    // Don't clear pending - let createNewChunkToken handle it
+                }
+            }
+            
+            // Check for saved mint transaction (unfinished minting)
+            const mintTxKey = getChunkStorageKey(chunkX, chunkZ, 'mintTx');
+            const savedMintTx = localStorage.getItem(mintTxKey);
+            if (savedMintTx) {
+                console.log(`Found unfinished mint transaction for chunk (${chunkX}, ${chunkZ}), attempting to complete...`);
+            }
+            
+            // Create new token from scratch (or recover from saved mint tx)
+            return await createNewChunkToken(chunkX, chunkZ);
+        } catch (error) {
+            // Clear pending state on error
+            localStorage.removeItem(pendingKey);
+            throw error;
+        } finally {
+            // Remove from tracking map when done
+            chunksBeingTokenized.delete(chunkKey);
+        }
+    })();
+    
+    // Store the promise in the map
+    chunksBeingTokenized.set(chunkKey, tokenizationPromise);
+    
+    return tokenizationPromise;
+}
+
+// Create a new chunk token
+async function createNewChunkToken(chunkX, chunkZ) {
+    console.log(`Starting chunk tokenization for (${chunkX}, ${chunkZ})...`);
+    
+    // Get pending key once at the beginning
+    const pendingKey = getChunkStorageKey(chunkX, chunkZ, 'pending');
+    
+    try {
+        // Check if we have a saved mint transaction to recover
+        const mintTxKey = getChunkStorageKey(chunkX, chunkZ, 'mintTx');
+        const savedMintTx = localStorage.getItem(mintTxKey);
+        
+        let tokenId, tokenType, predicate, mintData, chunkState, stateBytes, chunkNonce;
+        
+        if (savedMintTx) {
+            // Recover from saved mint transaction
+            console.log(`Recovering saved mint transaction for chunk (${chunkX}, ${chunkZ})...`);
+            const savedData = JSON.parse(savedMintTx);
+            
+            tokenId = window.UnicitySDK.TokenId.create(
+                window.UnicitySDK.HexConverter.decode(savedData.tokenId)
+            );
+            tokenType = window.UnicitySDK.TokenType.create(
+                window.UnicitySDK.HexConverter.decode(savedData.tokenType)
+            );
+            chunkState = savedData.chunkState;
+            stateBytes = new TextEncoder().encode(JSON.stringify(chunkState));
+            chunkNonce = window.UnicitySDK.HexConverter.decode(savedData.nonce);
+            
+            // Recreate signing service
+            const privateKey = window.UnicitySDK.HexConverter.decode(
+                localStorage.getItem('unicityRunner_privateKey')
+            );
+            const chunkSigningService = await window.UnicitySDK.SigningService.createFromSecret(
+                privateKey,
+                chunkNonce
+            );
+            
+            // Recreate predicate
+            predicate = await window.UnicitySDK.MaskedPredicate.create(
+                tokenId,
+                tokenType,
+                chunkSigningService,
+                window.UnicitySDK.HashAlgorithm.SHA256,
+                chunkNonce
+            );
+            
+            // Recreate mint data from saved values
+            const dataHash = await new window.UnicitySDK.DataHasher(
+                window.UnicitySDK.HashAlgorithm.SHA256
+            ).update(stateBytes).digest();
+            
+            mintData = await window.UnicitySDK.MintTransactionData.create(
+                tokenId,
+                tokenType,
+                window.UnicitySDK.HexConverter.decode(savedData.tokenData),
+                null, // No coin data
+                savedData.recipient,
+                window.UnicitySDK.HexConverter.decode(savedData.salt),
+                dataHash,
+                null // reason
+            );
+        } else {
+            // Generate new mint transaction
+            const tokenIdBytes = await generateChunkTokenId(chunkX, chunkZ, WORLD_SEED, GAMEDEV_VERSION);
+            tokenId = window.UnicitySDK.TokenId.create(tokenIdBytes);
+            tokenType = window.UnicitySDK.TokenType.create(CHUNK_TOKEN_TYPE_BYTES);
+            
+            // Create chunk state data
+            chunkState = {
+                x: chunkX,
+                z: chunkZ,
+                worldSeed: WORLD_SEED,
+                gamedevVersion: GAMEDEV_VERSION,
+                createdAt: Date.now(),
+                generatedAt: Date.now()
+            };
+            
+            // Encode state data
+            stateBytes = new TextEncoder().encode(JSON.stringify(chunkState));
+            const dataHash = await new window.UnicitySDK.DataHasher(
+                window.UnicitySDK.HashAlgorithm.SHA256
+            ).update(stateBytes).digest();
+            
+            // Create signing service for this chunk with deterministic nonce
+            chunkNonce = await generateChunkNonce(chunkX, chunkZ, WORLD_SEED);
+            const privateKey = window.UnicitySDK.HexConverter.decode(
+                localStorage.getItem('unicityRunner_privateKey')
+            );
+            const chunkSigningService = await window.UnicitySDK.SigningService.createFromSecret(
+                privateKey,
+                chunkNonce
+            );
+            
+            // Create predicate for chunk ownership
+            predicate = await window.UnicitySDK.MaskedPredicate.create(
+                tokenId,
+                tokenType,
+                chunkSigningService,
+                window.UnicitySDK.HashAlgorithm.SHA256,
+                chunkNonce
+            );
+            
+            // Create mint transaction data
+            const recipient = await window.UnicitySDK.DirectAddress.create(predicate.reference);
+            
+            const salt = crypto.getRandomValues(new Uint8Array(32));
+            mintData = await window.UnicitySDK.MintTransactionData.create(
+                tokenId,
+                tokenType,
+                new Uint8Array(0), // No immutable data
+                null, // No coin data
+                recipient.toString(),
+                salt,
+                dataHash,
+                null // reason
+            );
+            
+            // CRITICAL: Save mint transaction data BEFORE submitting
+            const mintTxToSave = {
+                tokenId: window.UnicitySDK.HexConverter.encode(tokenId.bytes),
+                tokenType: window.UnicitySDK.HexConverter.encode(tokenType.bytes),
+                tokenData: window.UnicitySDK.HexConverter.encode(new Uint8Array(0)),
+                recipient: recipient.toString(),
+                salt: window.UnicitySDK.HexConverter.encode(salt),
+                nonce: window.UnicitySDK.HexConverter.encode(chunkNonce),
+                chunkState: chunkState,
+                timestamp: Date.now(),
+                submitted: false,
+                requestId: null
+            };
+            localStorage.setItem(mintTxKey, JSON.stringify(mintTxToSave));
+            console.log(`Saved mint transaction data for chunk (${chunkX}, ${chunkZ})`);
+        }
+        
+        // Submit to Unicity network
+        const aggregatorClient = new window.UnicitySDK.AggregatorClient(
+            'https://gateway-test.unicity.network:443'
+        );
+        const client = new window.UnicitySDK.StateTransitionClient(aggregatorClient);
+        
+        let commitment;
+        const savedData = JSON.parse(localStorage.getItem(mintTxKey));
+        
+        // Check if we already have a request ID (meaning it was already submitted)
+        if (savedData.submitted && savedData.requestId) {
+            console.log(`Chunk (${chunkX}, ${chunkZ}) was already submitted with request ID: ${savedData.requestId}`);
+            // We need to recreate the commitment to poll for inclusion proof
+            // Since we can't override the request ID, we'll create it normally
+            const signingService = await window.UnicitySDK.SigningService.createFromSecret(
+                window.UnicitySDK.MINTER_SECRET,
+                tokenId.bytes
+            );
+            commitment = await window.UnicitySDK.Commitment.create(mintData, signingService);
+            
+            // Verify the request ID matches what we saved
+            const actualRequestId = commitment.requestId.toString();
+            if (actualRequestId !== savedData.requestId) {
+                console.warn(`Request ID mismatch for chunk (${chunkX}, ${chunkZ}). Expected: ${savedData.requestId}, Got: ${actualRequestId}`);
+                // Update with correct request ID
+                savedData.requestId = actualRequestId;
+                localStorage.setItem(mintTxKey, JSON.stringify(savedData));
+            }
+        } else {
+            // First time submission
+            console.log(`Submitting mint transaction for chunk (${chunkX}, ${chunkZ})...`);
+            console.log('Chunk Token ID:', window.UnicitySDK.HexConverter.encode(tokenId.bytes));
+            
+            try {
+                commitment = await client.submitMintTransaction(mintData);
+                console.log(`Mint commitment received for chunk (${chunkX}, ${chunkZ}):`, commitment.requestId.toString());
+                
+                // Update saved data with submission info
+                savedData.submitted = true;
+                savedData.requestId = commitment.requestId.toString();
+                localStorage.setItem(mintTxKey, JSON.stringify(savedData));
+            } catch (submitError) {
+                console.error(`Error submitting mint transaction for chunk (${chunkX}, ${chunkZ}):`, submitError);
+                
+                // Check if it's a REQUEST_ID_EXISTS error
+                if (submitError.message && submitError.message.includes('REQUEST_ID_EXISTS')) {
+                    console.log(`Chunk (${chunkX}, ${chunkZ}) - Transaction already exists, will poll for inclusion proof`);
+                    // Create commitment locally to get the request ID
+                    const signingService = await window.UnicitySDK.SigningService.createFromSecret(
+                        window.UnicitySDK.MINTER_SECRET,
+                        tokenId.bytes
+                    );
+                    commitment = await window.UnicitySDK.Commitment.create(mintData, signingService);
+                    
+                    // Save the request ID
+                    savedData.submitted = true;
+                    savedData.requestId = commitment.requestId.toString();
+                    localStorage.setItem(mintTxKey, JSON.stringify(savedData));
+                } else {
+                    // Log the response if available
+                    if (submitError.response) {
+                        console.error('Response status:', submitError.response.status);
+                        console.error('Response data:', submitError.response.data);
+                    }
+                    // Other error - re-throw
+                    throw submitError;
+                }
+            }
+        }
+        
+        // Wait for inclusion proof using SDK utility
+        let inclusionProof = await window.UnicitySDK.waitInclusionProof(
+            client,
+            commitment,
+            AbortSignal.timeout(30000), // 30 second timeout
+            1000 // Check every second
+        );
+        
+        // Create the transaction with inclusion proof, with retry for sporadic hash algorithm error
+        let mintTransaction;
+        let retryCount = 0;
+        const maxRetries = 3;
+        
+        while (retryCount < maxRetries) {
+            try {
+                mintTransaction = await client.createTransaction(commitment, inclusionProof);
+                break; // Success, exit loop
+            } catch (error) {
+                if (error.message && error.message.includes('Invalid inclusion proof hash algorithm') && retryCount < maxRetries - 1) {
+                    retryCount++;
+                    console.log(`Chunk (${chunkX}, ${chunkZ}) - Invalid hash algorithm error, retrying (${retryCount}/${maxRetries})...`);
+                    
+                    // Wait a bit before retry
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    
+                    // Refetch inclusion proof
+                    inclusionProof = await window.UnicitySDK.waitInclusionProof(
+                        client,
+                        commitment,
+                        AbortSignal.timeout(30000),
+                        1000
+                    );
+                } else {
+                    // Not the sporadic error or max retries reached
+                    throw error;
+                }
+            }
+        }
+        
+        // Create token state
+        const tokenState = await window.UnicitySDK.TokenState.create(predicate, stateBytes);
+        
+        // Create the complete token
+        const chunkToken = new window.UnicitySDK.Token(
+            tokenState,
+            mintTransaction,
+            [] // no additional transactions
+        );
+        
+        // Save the complete token
+        const tokenJson = chunkToken.toJSON();
+        saveChunkTokenData(chunkX, chunkZ, { 
+            token: tokenJson,
+            state: chunkState 
+        });
+        
+        // Clear pending state and mint transaction
+        localStorage.removeItem(pendingKey);
+        localStorage.removeItem(mintTxKey);
+        
+        console.log(`Successfully created chunk token for (${chunkX}, ${chunkZ})`);
+        return chunkToken;
+        
+    } catch (error) {
+        // Clear pending state on error
+        localStorage.removeItem(pendingKey);
+        
+        // Check for REQUEST_ID_EXISTS error
+        if (error.message && error.message.includes('REQUEST_ID_EXISTS')) {
+            console.log(`Chunk (${chunkX}, ${chunkZ}) - Transaction already submitted. Will check inclusion proof on next attempt.`);
+            // Keep the mint transaction data for recovery
+            // Don't throw the error since this is recoverable
+            return null;
+        } else {
+            console.error(`Error creating chunk token for (${chunkX}, ${chunkZ}):`, error);
+            // For other errors, clear the mint transaction too
+            const mintTxKey = getChunkStorageKey(chunkX, chunkZ, 'mintTx');
+            localStorage.removeItem(mintTxKey);
+        }
+        
+        throw error;
+    }
+}
+
+// Finish minting a chunk token that was partially created
+async function finishChunkTokenMinting(chunkX, chunkZ, existingData) {
+    // Since we're not saving intermediate states anymore, this shouldn't be called
+    // but we'll handle it gracefully
+    console.warn(`Unexpected call to finishChunkTokenMinting for chunk (${chunkX}, ${chunkZ})`);
+    return existingData.token;
+}
+
+// Check gamedev version and clear chunk tokens if version changed
+function checkGamedevVersionAndClearChunks() {
+    const GAMEDEV_VERSION_KEY = 'unicityRunner_gamedevVersion';
+    const savedVersion = localStorage.getItem(GAMEDEV_VERSION_KEY);
+    
+    if (savedVersion && savedVersion !== GAMEDEV_VERSION) {
+        console.log(`Gamedev version changed from ${savedVersion} to ${GAMEDEV_VERSION}. Clearing all chunk tokens...`);
+        
+        // Clear all chunk tokens and mint transactions
+        const keysToRemove = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith('unicityRunner_chunk_')) {
+                keysToRemove.push(key);
+            }
+        }
+        
+        console.log(`Removing ${keysToRemove.length} chunk token entries...`);
+        keysToRemove.forEach(key => localStorage.removeItem(key));
+        
+        console.log('Chunk tokens cleared due to version change');
+    }
+    
+    // Save current version
+    localStorage.setItem(GAMEDEV_VERSION_KEY, GAMEDEV_VERSION);
+}
+
+// Function to manually clear stale pending chunk tokens
+window.clearStalePendingChunks = function(maxAgeMinutes = 10) {
+    console.log(`Clearing pending chunk tokens older than ${maxAgeMinutes} minutes...`);
+    const maxAge = maxAgeMinutes * 60 * 1000;
+    let clearedCount = 0;
+    
+    const keysToCheck = [];
+    for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.includes('unicityRunner_chunk_') && key.endsWith('_pending')) {
+            keysToCheck.push(key);
+        }
+    }
+    
+    keysToCheck.forEach(key => {
+        try {
+            const pendingData = localStorage.getItem(key);
+            if (pendingData) {
+                const pending = JSON.parse(pendingData);
+                if (Date.now() - pending.timestamp > maxAge) {
+                    localStorage.removeItem(key);
+                    clearedCount++;
+                    console.log(`Cleared stale pending token: ${key}`);
+                }
+            }
+        } catch (e) {
+            console.error(`Error processing ${key}:`, e);
+        }
+    });
+    
+    console.log(`Cleared ${clearedCount} stale pending chunk tokens`);
+    return clearedCount;
+};
+
+// Function to manually clear saved mint transactions
+window.clearSavedMintTransactions = function() {
+    console.log('Clearing all saved mint transactions...');
+    let clearedCount = 0;
+    
+    const keysToCheck = [];
+    for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.includes('unicityRunner_chunk_') && key.endsWith('_mintTx')) {
+            keysToCheck.push(key);
+        }
+    }
+    
+    keysToCheck.forEach(key => {
+        localStorage.removeItem(key);
+        clearedCount++;
+        console.log(`Cleared mint transaction: ${key}`);
+    });
+    
+    console.log(`Cleared ${clearedCount} saved mint transactions`);
+    return clearedCount;
+};
+
+// Function to manually retry chunk tokenization
+window.retryChunkTokenization = async function(chunkX, chunkZ) {
+    console.log(`Manually retrying tokenization for chunk (${chunkX}, ${chunkZ})...`);
+    
+    // Clear any pending state
+    const pendingKey = getChunkStorageKey(chunkX, chunkZ, 'pending');
+    localStorage.removeItem(pendingKey);
+    
+    // Clear from in-memory tracking
+    const chunkKey = `${chunkX},${chunkZ}`;
+    chunksBeingTokenized.delete(chunkKey);
+    
+    try {
+        const result = await ensureChunkToken(chunkX, chunkZ);
+        console.log(`Retry completed for chunk (${chunkX}, ${chunkZ})`);
+        return result;
+    } catch (error) {
+        console.error(`Retry failed for chunk (${chunkX}, ${chunkZ}):`, error);
+        throw error;
+    }
+};
+
+// Function to inspect saved mint transaction
+window.inspectMintTransaction = function(chunkX, chunkZ) {
+    const mintTxKey = getChunkStorageKey(chunkX, chunkZ, 'mintTx');
+    const savedData = localStorage.getItem(mintTxKey);
+    
+    if (!savedData) {
+        console.log(`No saved mint transaction for chunk (${chunkX}, ${chunkZ})`);
+        return null;
+    }
+    
+    const parsed = JSON.parse(savedData);
+    console.log(`Mint transaction for chunk (${chunkX}, ${chunkZ}):`, parsed);
+    
+    // Decode hex values for inspection
+    console.log('Decoded values:');
+    console.log('- Token ID:', parsed.tokenId);
+    console.log('- Token Type:', parsed.tokenType);
+    console.log('- Recipient:', parsed.recipient);
+    console.log('- Salt length:', parsed.salt ? parsed.salt.length / 2 : 0, 'bytes');
+    console.log('- Nonce length:', parsed.nonce ? parsed.nonce.length / 2 : 0, 'bytes');
+    console.log('- Submitted:', parsed.submitted);
+    console.log('- Request ID:', parsed.requestId);
+    console.log('- Timestamp:', new Date(parsed.timestamp).toLocaleString());
+    console.log('- Age:', Math.floor((Date.now() - parsed.timestamp) / 1000), 'seconds');
+    
+    return parsed;
+};
+
+// Debug function to show chunk token statistics
+window.debugChunkTokens = function() {
+    const stats = {
+        total: 0,
+        minted: 0,
+        pending: 0,
+        inProgress: 0,
+        notStarted: 0,
+        failed: 0,
+        chunks: {
+            minted: [],
+            pending: [],
+            inProgress: [],
+            failed: []
+        }
+    };
+    
+    // Collect all chunk-related keys
+    const chunkPattern = /^unicityRunner_chunk_(-?\d+)_(-?\d+)_(.+)$/;
+    const chunksData = new Map();
+    
+    for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('unicityRunner_chunk_')) {
+            const match = key.match(chunkPattern);
+            if (match) {
+                const [, x, z, dataType] = match;
+                const chunkKey = `${x},${z}`;
+                
+                if (!chunksData.has(chunkKey)) {
+                    chunksData.set(chunkKey, {
+                        x: parseInt(x),
+                        z: parseInt(z),
+                        hasToken: false,
+                        hasCommitment: false,
+                        hasState: false
+                    });
+                }
+                
+                const chunkInfo = chunksData.get(chunkKey);
+                if (dataType === 'token') chunkInfo.hasToken = true;
+                if (dataType === 'commitment') chunkInfo.hasCommitment = true;
+                if (dataType === 'state') chunkInfo.hasState = true;
+                if (dataType === 'pending') chunkInfo.hasPending = true;
+                if (dataType === 'mintTx') chunkInfo.hasMintTx = true;
+            }
+        }
+    }
+    
+    // Analyze each chunk
+    chunksData.forEach((chunkInfo, chunkKey) => {
+        stats.total++;
+        
+        // Load the actual data to check status
+        const tokenData = loadChunkTokenData(chunkInfo.x, chunkInfo.z);
+        
+        if (tokenData.token && tokenData.token._mint) {
+            // Fully minted
+            stats.minted++;
+            stats.chunks.minted.push(`(${chunkInfo.x}, ${chunkInfo.z})`);
+        } else if (chunkInfo.hasPending || chunkInfo.hasMintTx) {
+            // Pending (submitted but not completed)
+            const pendingKey = getChunkStorageKey(chunkInfo.x, chunkInfo.z, 'pending');
+            const pendingData = localStorage.getItem(pendingKey);
+            if (pendingData) {
+                const pending = JSON.parse(pendingData);
+                const ageSeconds = Math.floor((Date.now() - pending.timestamp) / 1000);
+                const hasMintTx = chunkInfo.hasMintTx ? ' (has mint tx)' : '';
+                stats.pending++;
+                stats.chunks.pending.push(`(${chunkInfo.x}, ${chunkInfo.z}) - age: ${ageSeconds}s${hasMintTx}`);
+            }
+        } else if (tokenData.commitment || (tokenData.token && !tokenData.token._mint)) {
+            // In progress
+            stats.inProgress++;
+            const status = tokenData.commitment?.submitted ? 'submitted' : 'not submitted';
+            stats.chunks.inProgress.push(`(${chunkInfo.x}, ${chunkInfo.z}) - ${status}`);
+        } else {
+            // This shouldn't happen for chunks in localStorage
+            stats.failed++;
+            stats.chunks.failed.push(`(${chunkInfo.x}, ${chunkInfo.z}) - unexpected state`);
+        }
+    });
+    
+    // Display results
+    console.log('=== Chunk Token Statistics ===');
+    console.log(`Total chunks tracked: ${stats.total}`);
+    console.log(`Fully minted: ${stats.minted}`);
+    console.log(`Pending (submitted): ${stats.pending}`);
+    console.log(`In progress: ${stats.inProgress}`);
+    console.log(`Failed/Unknown: ${stats.failed}`);
+    
+    if (stats.chunks.minted.length > 0) {
+        console.log('\nMinted chunks:', stats.chunks.minted.join(', '));
+    }
+    
+    if (stats.chunks.pending.length > 0) {
+        console.log('\nPending chunks (submitted but not completed):');
+        stats.chunks.pending.forEach(chunk => console.log(`  ${chunk}`));
+    }
+    
+    if (stats.chunks.inProgress.length > 0) {
+        console.log('\nIn-progress chunks:');
+        stats.chunks.inProgress.forEach(chunk => console.log(`  ${chunk}`));
+    }
+    
+    if (stats.chunks.failed.length > 0) {
+        console.log('\nFailed chunks:', stats.chunks.failed.join(', '));
+    }
+    
+    console.log('\nUse debugChunkTokens() to refresh this information');
+    
+    return stats;
+};
 
 // Generate level structure for a chunk (rooms and corridors)
 function generateLevelForChunk(chunkX, chunkZ, seed) {
@@ -474,13 +1199,34 @@ async function initializePlayerToken() {
         const tokenData = JSON.parse(savedTokenString);
         
         // Use TokenFactory to recreate the token from stored data
-        const predicateFactory = new window.UnicitySDK.PredicateJsonFactory();
-        const tokenJsonSerializer = new window.UnicitySDK.TokenJsonSerializer(predicateFactory);
-        const tokenFactory = new window.UnicitySDK.TokenFactory(tokenJsonSerializer);
-        playerToken = await tokenFactory.create(tokenData);
+        try {
+            const predicateFactory = new window.UnicitySDK.PredicateJsonFactory();
+            const tokenJsonSerializer = new window.UnicitySDK.TokenJsonSerializer(predicateFactory);
+            const tokenFactory = new window.UnicitySDK.TokenFactory(tokenJsonSerializer);
+            playerToken = await tokenFactory.create(tokenData);
+        } catch (error) {
+            console.error('Failed to recreate player token:', error);
+            console.error('Token data:', tokenData);
+            // Clear invalid token and create new one
+            localStorage.removeItem('unicityRunner_playerToken');
+            localStorage.removeItem('unicityRunner_privateKey');
+            await createNewPlayerToken();
+            return;
+        }
         
         // Recreate signing service with the nonce from the token's predicate
         const privateKeyBytes = window.UnicitySDK.HexConverter.decode(savedPrivateKey);
+        
+        // Check if nonce exists in the unlock predicate
+        if (!playerToken.state || !playerToken.state.unlockPredicate || !playerToken.state.unlockPredicate.nonce) {
+            console.error('Token is missing unlock predicate or nonce:', {
+                hasState: !!playerToken.state,
+                hasUnlockPredicate: !!(playerToken.state && playerToken.state.unlockPredicate),
+                unlockPredicate: playerToken.state?.unlockPredicate
+            });
+            throw new Error('Token missing required unlock predicate data');
+        }
+        
         const nonce = playerToken.state.unlockPredicate.nonce;
         signingService = await window.UnicitySDK.SigningService.createFromSecret(privateKeyBytes, nonce);
         
@@ -570,7 +1316,14 @@ async function createNewPlayerToken() {
     try {
         // Submit mint transaction to Unicity network
         console.log('Submitting mint transaction to Unicity network...');
+        console.log('Token ID:', window.UnicitySDK.HexConverter.encode(tokenId.bytes));
+        console.log('Token Type:', Array.from(tokenType.bytes));
+        console.log('Recipient:', recipient.toString());
+        console.log('Data Hash:', dataHash.toString());
+        
         const mintCommitment = await client.submitMintTransaction(mintTransactionData);
+        console.log('Mint commitment received:', mintCommitment);
+        console.log('Request ID:', mintCommitment.requestId.toString());
         
         // Wait for inclusion proof using SDK utility
         console.log('Waiting for inclusion proof...');
@@ -611,9 +1364,23 @@ async function createNewPlayerToken() {
         updateTokenStatusDisplay();
     } catch (error) {
         console.error('Failed to mint token on Unicity network:', error);
+        console.error('Error details:', {
+            message: error.message,
+            stack: error.stack,
+            response: error.response,
+            status: error.status,
+            data: error.data
+        });
+        
+        // Check for specific error types
+        if (error.message && error.message.includes('REQUEST_ID_EXISTS')) {
+            console.error('REQUEST_ID_EXISTS error - this token ID may already exist');
+            console.error('Token ID that failed:', window.UnicitySDK.HexConverter.encode(tokenId.bytes));
+        }
+        
         tokenStatus.initialized = true;
         tokenStatus.totalSubmissions = 1;
-        tokenStatus.lastError = 'Mint failed';
+        tokenStatus.lastError = error.message || 'Mint failed';
         updateTokenStatusDisplay();
         throw error;
     }
@@ -912,12 +1679,25 @@ function setupNoaEngine() {
     
     
     // Set up world generation with rooms and corridors
-    noa.world.on('worldDataNeeded', function (id, data, x, y, z) {
+    noa.world.on('worldDataNeeded', async function (id, data, x, y, z) {
         const chunkSize = data.shape[0];
         
         // Calculate which chunk we're in
         const chunkX = Math.floor(x / chunkSize);
         const chunkZ = Math.floor(z / chunkSize);
+        
+        // Ensure chunk token exists (create or recover)
+        try {
+            // Only tokenize chunks if we have a player's private key
+            if (localStorage.getItem('unicityRunner_privateKey')) {
+                await ensureChunkToken(chunkX, chunkZ);
+            } else {
+                // Skip chunk tokenization - no private key yet
+            }
+        } catch (error) {
+            console.error(`Failed to ensure chunk token for (${chunkX}, ${chunkZ}):`, error);
+            // Continue with chunk generation even if tokenization fails
+        }
         
         // Generate level structure for this chunk
         const level = generateLevelForChunk(chunkX, chunkZ, WORLD_SEED);
