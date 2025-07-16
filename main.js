@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00068'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00088'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -620,6 +620,7 @@ async function tokenizeChunk(chunkX, chunkZ) {
                 // Continue with normal flow
             } else if (mintData.submitted) {
                 // Create a promise that attempts to complete the minting
+                console.log(`Chunk (${chunkX}, ${chunkZ}) has submitted mint transaction, attempting recovery...`);
                 const recoveryPromise = createNewChunkToken(chunkX, chunkZ).catch(error => {
                     console.error(`Recovery failed for chunk (${chunkX}, ${chunkZ}):`, error);
                     return null;
@@ -850,21 +851,136 @@ async function createNewChunkToken(chunkX, chunkZ) {
         
         // Check if we already have a request ID (meaning it was already submitted)
         if (savedData.submitted && savedData.requestId) {
-            // We need to recreate the commitment to poll for inclusion proof
-            // Since we can't override the request ID, we'll create it normally
-            const signingService = await window.UnicitySDK.SigningService.createFromSecret(
-                window.UnicitySDK.MINTER_SECRET,
-                tokenId.bytes
-            );
-            commitment = await window.UnicitySDK.Commitment.create(mintData, signingService);
+            console.warn(`Chunk (${chunkX}, ${chunkZ}) mint transaction was already submitted with request ID: ${savedData.requestId}`);
             
-            // Verify the request ID matches what we saved
-            const actualRequestId = commitment.requestId.toString();
-            if (actualRequestId !== savedData.requestId) {
-                console.warn(`Request ID mismatch for chunk (${chunkX}, ${chunkZ}). Expected: ${savedData.requestId}, Got: ${actualRequestId}`);
-                // Update with correct request ID
-                savedData.requestId = actualRequestId;
-                localStorage.setItem(mintTxKey, JSON.stringify(savedData));
+            // First check if the token was already minted and saved
+            const existingToken = loadChunkTokenData(chunkX, chunkZ);
+            if (existingToken.token && existingToken.state && existingToken.state.gamedevVersion === GAMEDEV_VERSION) {
+                // Token was successfully minted, clean up pending state
+                localStorage.removeItem(pendingKey);
+                localStorage.removeItem(mintTxKey);
+                const chunkKey = `${chunkX},${chunkZ}`;
+                pendingMintTransactions.delete(chunkKey);
+                
+                // Recreate and return the token
+                const predicateFactory = new window.UnicitySDK.PredicateJsonFactory();
+                const tokenJsonSerializer = new window.UnicitySDK.TokenJsonSerializer(predicateFactory);
+                const tokenFactory = new window.UnicitySDK.TokenFactory(tokenJsonSerializer);
+                return await tokenFactory.create(existingToken.token);
+            }
+            
+            // Transaction was submitted but token not saved - try to recover it
+            console.log(`Attempting to recover submitted mint transaction for chunk (${chunkX}, ${chunkZ})`);
+            
+            try {
+                // For recovery, we need to reconstruct the mint data first
+                mintData = await window.UnicitySDK.MintTransactionData.create(
+                    tokenId,
+                    tokenType,
+                    window.UnicitySDK.HexConverter.decode(savedData.tokenData),
+                    null, // No coin data
+                    savedData.recipient,
+                    window.UnicitySDK.HexConverter.decode(savedData.salt),
+                    null, // No data hash for chunk tokens
+                    null // reason
+                );
+                
+                // Reconstruct a minimal commitment - we need the mint data and request ID
+                const requestId = window.UnicitySDK.RequestId.fromJSON(savedData.requestId);
+                
+                // For the SDK's createTransaction, we need a commitment with transactionData property
+                const commitment = {
+                    transactionData: mintData,
+                    requestId: requestId
+                };
+                
+                // Wait for inclusion proof
+                console.log(`Waiting for inclusion proof for chunk (${chunkX}, ${chunkZ})...`);
+                const inclusionProof = await window.UnicitySDK.waitInclusionProof(
+                    client,
+                    commitment,
+                    AbortSignal.timeout(30000), // 30 second timeout
+                    1000 // Check every second
+                );
+                
+                // Log inclusion proof structure for debugging
+                console.log(`Got inclusion proof for chunk (${chunkX}, ${chunkZ}):`, {
+                    hasTransactionHash: !!inclusionProof.transactionHash,
+                    hasAuthenticator: !!inclusionProof.authenticator,
+                    inclusionProof
+                });
+                
+                // For mint transactions that were already submitted, we might not get a proper inclusion proof
+                // In this case, we need to construct the transaction manually
+                let mintTransaction;
+                try {
+                    mintTransaction = await retryOnInclusionProofError(async () => {
+                        return await client.createTransaction(commitment, inclusionProof);
+                    });
+                } catch (error) {
+                    console.error(`Failed to create transaction from inclusion proof:`, error);
+                    
+                    // If we can't create transaction from inclusion proof, we can't recover the token
+                    throw new Error('Cannot recover mint transaction - inclusion proof invalid');
+                }
+                
+                // Reconstruct the predicate
+                const chunkNonce = window.UnicitySDK.HexConverter.decode(savedData.nonce);
+                const chunkSigningService = await window.UnicitySDK.SigningService.createFromSecret(
+                    crypto.getRandomValues(new Uint8Array(32)), // Random key for chunk
+                    chunkNonce
+                );
+                
+                const predicate = await window.UnicitySDK.MaskedPredicate.create(
+                    tokenId,
+                    tokenType,
+                    chunkSigningService,
+                    window.UnicitySDK.HashAlgorithm.SHA256,
+                    chunkNonce
+                );
+                
+                // Create token state with chunk data
+                const tokenState = await window.UnicitySDK.TokenState.create(
+                    predicate,
+                    new TextEncoder().encode(JSON.stringify(savedData.chunkState))
+                );
+                
+                // Create the token
+                const chunkToken = new window.UnicitySDK.Token(
+                    tokenState,
+                    mintTransaction,
+                    []
+                );
+                
+                // Save the recovered token
+                const tokenToSave = {
+                    token: chunkToken.toJSON(),
+                    state: savedData.chunkState,
+                    tokenId: savedData.tokenId,
+                    tokenType: savedData.tokenType,
+                    timestamp: Date.now()
+                };
+                
+                saveChunkTokenData(chunkX, chunkZ, tokenToSave);
+                
+                // Clean up pending state
+                localStorage.removeItem(pendingKey);
+                localStorage.removeItem(mintTxKey);
+                const chunkKey = `${chunkX},${chunkZ}`;
+                pendingMintTransactions.delete(chunkKey);
+                
+                console.log(`Successfully recovered mint transaction for chunk (${chunkX}, ${chunkZ})`);
+                return chunkToken;
+                
+            } catch (recoveryError) {
+                console.error(`Failed to recover mint transaction for chunk (${chunkX}, ${chunkZ}):`, recoveryError);
+                
+                // If recovery fails, clear the pending state
+                localStorage.removeItem(pendingKey);
+                localStorage.removeItem(mintTxKey);
+                const chunkKey = `${chunkX},${chunkZ}`;
+                pendingMintTransactions.delete(chunkKey);
+                return null;
             }
         } else {
             // First time submission
@@ -874,7 +990,7 @@ async function createNewChunkToken(chunkX, chunkZ) {
                 
                 // Update saved data with submission info
                 savedData.submitted = true;
-                savedData.requestId = commitment.requestId.toString();
+                savedData.requestId = commitment.requestId.toJSON();
                 localStorage.setItem(mintTxKey, JSON.stringify(savedData));
                 
                 // Update in-memory tracking
@@ -904,21 +1020,19 @@ async function createNewChunkToken(chunkX, chunkZ) {
                         return await tokenFactory.create(existingToken.token);
                     }
                     
-                    // Create commitment locally to get the request ID
-                    const signingService = await window.UnicitySDK.SigningService.createFromSecret(
-                        window.UnicitySDK.MINTER_SECRET,
-                        tokenId.bytes
-                    );
-                    commitment = await window.UnicitySDK.Commitment.create(mintData, signingService);
+                    // Transaction was already submitted - mark it as submitted for recovery
+                    console.warn(`Chunk (${chunkX}, ${chunkZ}) mint transaction already exists (REQUEST_ID_EXISTS). Marking as submitted for recovery.`);
                     
-                    // Save the request ID
+                    // Mark the transaction as submitted instead of clearing it
                     savedData.submitted = true;
-                    savedData.requestId = commitment.requestId.toString();
-                    localStorage.setItem(mintTxKey, JSON.stringify(savedData));
+                    localStorage.setItem(pendingKey, JSON.stringify(savedData));
                     
-                    // Update in-memory tracking
+                    // Clear from in-memory tracking to allow retry on next cycle
                     const chunkKey = `${chunkX},${chunkZ}`;
-                    pendingMintTransactions.set(chunkKey, savedData);
+                    pendingMintTransactions.delete(chunkKey);
+                    
+                    // Return null for now - will be recovered on next attempt
+                    return null;
                 } else {
                     // Log the response if available
                     if (submitError.response) {
@@ -929,6 +1043,12 @@ async function createNewChunkToken(chunkX, chunkZ) {
                     throw submitError;
                 }
             }
+        }
+        
+        // Only proceed if we have a valid commitment
+        if (!commitment) {
+            console.error(`No commitment available for chunk (${chunkX}, ${chunkZ})`);
+            return null;
         }
         
         // Wait for inclusion proof using SDK utility
@@ -1630,7 +1750,7 @@ async function mintURCToken(amount) {
         
         // Update pending mint with commitment info
         pendingMint.status = 'submitted';
-        pendingMint.requestId = commitment.requestId.toString();
+        pendingMint.requestId = commitment.requestId.toJSON();
         savePendingURCMint(pendingMint);
         
         // Poll for inclusion proof
@@ -3673,10 +3793,28 @@ function forceChunkGeneration() {
     noa.world.tick();
 }
 
+// Track if update is in progress
+let isUpdatingPlayerToken = false;
+let updateIntervalId = null;
+
 // Start periodic state updates
 function startPeriodicUpdates() {
-    setInterval(async () => {
+    // Prevent multiple intervals
+    if (updateIntervalId) {
+        console.warn('Periodic updates already started');
+        return;
+    }
+    
+    updateIntervalId = setInterval(async () => {
         if (!noa || !playerToken || !signingService) return;
+        
+        // Skip if already updating
+        if (isUpdatingPlayerToken) {
+            console.log('Skipping player token update - already in progress');
+            return;
+        }
+        
+        isUpdatingPlayerToken = true;
         
         // Ensure signing service is in sync with current token's predicate nonce
         // This is crucial for creating valid commitments after token updates
@@ -3708,155 +3846,204 @@ function startPeriodicUpdates() {
         
         // Check if we have a pending transaction from a previous attempt
         const pendingTxKey = 'unicityRunner_pendingTransaction';
-        let pendingTx = localStorage.getItem(pendingTxKey);
+        let pendingTx = null;
+        const pendingTxString = localStorage.getItem(pendingTxKey);
+        if (pendingTxString) {
+            try {
+                pendingTx = JSON.parse(pendingTxString);
+                console.log('Found pending transaction:', { 
+                    submitted: pendingTx.submitted, 
+                    timestamp: new Date(pendingTx.timestamp).toISOString() 
+                });
+                
+                // Check if this pending transaction is too old
+                const maxAge = 2 * 60 * 1000; // 2 minutes
+                const age = Date.now() - pendingTx.timestamp;
+                if (age > maxAge) {
+                    console.warn(`Clearing old pending transaction (age: ${Math.floor(age/1000)}s)`);
+                    localStorage.removeItem(pendingTxKey);
+                    pendingTx = null;
+                }
+            } catch (e) {
+                console.error('Failed to parse pending transaction:', e);
+                localStorage.removeItem(pendingTxKey);
+            }
+        }
         
-        let commitment, newPredicate, newNonce, transactionData, savedStateData;
+        let commitment, newPredicate, newNonce, transactionData;
         
         // Update pending status
         tokenStatus.pendingTransaction = !!pendingTx;
         updateTokenStatusDisplay();
         
-        if (pendingTx) {
-            // Recover from pending transaction
-            const pending = JSON.parse(pendingTx);
+        if (pendingTx && pendingTx.submitted) {
+            // We have a submitted transaction - try to recover it
+            console.log('Found submitted transaction - attempting recovery');
             
-            // Check if this is an old format without stateData
-            if (!pending.stateData) {
-                console.warn('Invalid pending transaction format (missing stateData), clearing...');
-                localStorage.removeItem(pendingTxKey);
-                pendingTx = null;
-            } else {
-                // Check if this pending transaction is too old or has failed too many times
-                const maxRetries = 3;
-                const maxAge = 5 * 60 * 1000; // 5 minutes
-                
-                if (!pending.retryCount) {
-                    pending.retryCount = 0;
-                }
-                
-                const age = Date.now() - pending.timestamp;
-                if (age > maxAge || pending.retryCount >= maxRetries) {
-                    console.warn(`Clearing stuck pending transaction (age: ${Math.floor(age/1000)}s, retries: ${pending.retryCount})`);
-                    localStorage.removeItem(pendingTxKey);
-                    pendingTx = null;
-                    tokenStatus.pendingTransaction = false;
-                    tokenStatus.lastError = 'Pending transaction expired';
-                    updateTokenStatusDisplay();
-                } else {
-                    // Increment retry count
-                    pending.retryCount++;
-                    localStorage.setItem(pendingTxKey, JSON.stringify(pending));
-                    
-                    // Recreate objects from saved data
-                const predicateFactory = new window.UnicitySDK.PredicateJsonFactory();
-                newPredicate = await predicateFactory.create(
-                    playerToken.id,
-                    playerToken.type,
-                    pending.newPredicate
-                );
-                newNonce = window.UnicitySDK.HexConverter.decode(pending.newNonce);
-                
-                // Restore the state data
-                savedStateData = window.UnicitySDK.HexConverter.decode(pending.stateData);
-                
-                // IMPORTANT: We need to use the signing service with the CURRENT nonce,
-                // not the new nonce. The current nonce matches the player token's current predicate.
-                // The commitment proves ownership of the current token state.
-                
-                // Recreate transaction data from saved info
-                const salt = window.UnicitySDK.HexConverter.decode(pending.commitment.transactionData.salt);
-                const savedDataHash = window.UnicitySDK.DataHash.fromJSON(pending.commitment.transactionData.dataHash);
-                const message = window.UnicitySDK.HexConverter.decode(pending.commitment.transactionData.message);
+            try {
+                // Create aggregator client for recovery
+                const aggregatorClient = new window.UnicitySDK.AggregatorClient('https://goggregator-test.unicity.network');
+                const client = new window.UnicitySDK.StateTransitionClient(aggregatorClient);
+                // Recreate the transaction data from saved info
+                const salt = window.UnicitySDK.HexConverter.decode(pendingTx.transactionData.salt);
+                const savedDataHash = window.UnicitySDK.DataHash.fromJSON(pendingTx.transactionData.dataHash);
+                const message = window.UnicitySDK.HexConverter.decode(pendingTx.transactionData.message);
                 
                 transactionData = await window.UnicitySDK.TransactionData.create(
                     playerToken.state,
-                    pending.commitment.transactionData.recipientAddress,
+                    pendingTx.transactionData.recipientAddress,
                     salt,
                     savedDataHash,
                     message,
                     [] // no nametag tokens
                 );
                 
-                // Check if transaction was already submitted
-                if (pending.submitted) {
-                    // Transaction was already submitted - we need to recover it
-                    // Skip creating a new commitment and go straight to polling
-                    pendingTx = pending;
-                    
-                    // We'll need to poll for inclusion proof without the commitment object
-                    // This is handled in the catch block for REQUEST_ID_EXISTS
-                    throw new Error('RECOVERING_SUBMITTED_TX');
-                } else {
-                    // Transaction was not submitted yet - recreate commitment
-                    commitment = await window.UnicitySDK.Commitment.create(transactionData, signingService);
+                // Recreate commitment properly using the signing service
+                commitment = await window.UnicitySDK.Commitment.create(transactionData, signingService);
+                
+                // Verify the request ID matches what was saved
+                const savedRequestId = window.UnicitySDK.RequestId.fromJSON(pendingTx.requestId);
+                if (commitment.requestId.toJSON() !== pendingTx.requestId) {
+                    console.warn('Recreated commitment has different request ID. Using saved one.');
+                    // Use the saved request ID for recovery
+                    commitment = {
+                        transactionData: transactionData,
+                        requestId: savedRequestId
+                    };
                 }
                 
-                // Override stateData with the saved one
-                stateData = savedStateData;
-                }
+                // Recreate predicate and nonce from saved data
+                const predicateFactory = new window.UnicitySDK.PredicateJsonFactory();
+                newPredicate = await predicateFactory.create(
+                    playerToken.id,
+                    playerToken.type,
+                    pendingTx.newPredicate
+                );
+                newNonce = window.UnicitySDK.HexConverter.decode(pendingTx.newNonce);
+                
+                // Restore the state data
+                const savedStateData = window.UnicitySDK.HexConverter.decode(pendingTx.stateData);
+                
+                // Wait for inclusion proof
+                console.log('Waiting for inclusion proof for submitted transaction...');
+                const inclusionProof = await window.UnicitySDK.waitInclusionProof(
+                    client,
+                    commitment,
+                    AbortSignal.timeout(30000), // 30 second timeout
+                    1000 // Check every second
+                );
+                
+                const transaction = await retryOnInclusionProofError(async () => {
+                    return await client.createTransaction(commitment, inclusionProof);
+                });
+                
+                // Create new token state with new predicate
+                const newTokenState = await window.UnicitySDK.TokenState.create(
+                    newPredicate,
+                    savedStateData
+                );
+                
+                // Finish transaction to update token
+                playerToken = await client.finishTransaction(
+                    playerToken,
+                    newTokenState,
+                    transaction
+                );
+                
+                // Clear pending transaction on success
+                localStorage.removeItem(pendingTxKey);
+                
+                // Update status
+                tokenStatus.totalSubmissions++;
+                tokenStatus.successfulSubmissions++;
+                tokenStatus.pendingTransaction = false;
+                tokenStatus.lastUpdateTime = Date.now();
+                tokenStatus.lastError = null;
+                updateTokenStatusDisplay();
+                
+                // Serialize and save the updated token locally
+                const tokenJson = playerToken.toJSON();
+                localStorage.setItem('unicityRunner_playerToken', JSON.stringify(tokenJson));
+                
+                console.log('Successfully recovered submitted transaction');
+                isUpdatingPlayerToken = false;
+                return;
+                
+            } catch (recoveryError) {
+                console.error('Failed to recover submitted transaction:', recoveryError);
+                
+                // Clear the stuck transaction
+                localStorage.removeItem(pendingTxKey);
+                tokenStatus.pendingTransaction = false;
+                tokenStatus.lastError = 'Failed to recover transaction - cleared';
+                updateTokenStatusDisplay();
+                isUpdatingPlayerToken = false;
+                return;
             }
-        }
-        
-        if (!pendingTx) {
-            // Generate new nonce for one-time address
-            newNonce = crypto.getRandomValues(new Uint8Array(32));
-            
-            // Create a new signing service with the new nonce for the new predicate
-            // This is required because MaskedPredicate needs a signing service created with the same nonce
-            const privateKeyBytes = window.UnicitySDK.HexConverter.decode(localStorage.getItem('unicityRunner_privateKey'));
-            const newSigningService = await window.UnicitySDK.SigningService.createFromSecret(privateKeyBytes, newNonce);
-            
-            // Create new masked predicate with new nonce (one-time address)
-            newPredicate = await window.UnicitySDK.MaskedPredicate.create(
-                playerToken.id,
-                playerToken.type,
-                newSigningService,  // Use the new signing service with matching nonce
-                window.UnicitySDK.HashAlgorithm.SHA256,
-                newNonce
-            );
-            
-            // Create new recipient address from the new predicate
-            const recipient = await window.UnicitySDK.DirectAddress.create(newPredicate.reference);
-            
-            // Create transaction data for state update
-            
-            transactionData = await window.UnicitySDK.TransactionData.create(
-                playerToken.state,
-                recipient.toString(),
-                crypto.getRandomValues(new Uint8Array(32)), // salt
-                dataHash,
-                new TextEncoder().encode('State update'),
-                [] // no nametag tokens
-            );
-            
-            // Create commitment
-            commitment = await window.UnicitySDK.Commitment.create(transactionData, signingService);
-            
-            // Save pending transaction BEFORE submitting
-            // Use JSON serialization for commitment
-            const pendingData = {
-                commitment: {
-                    requestId: commitment.requestId.toJSON(),
-                    transactionData: {
-                        // We'll reconstruct this from the token state
-                        recipientAddress: recipient.toString(),
-                        salt: window.UnicitySDK.HexConverter.encode(transactionData.salt),
-                        dataHash: dataHash.toJSON(),
-                        message: window.UnicitySDK.HexConverter.encode(new TextEncoder().encode('State update'))
-                    }
-                },
-                newPredicate: newPredicate.toJSON(),
-                newNonce: window.UnicitySDK.HexConverter.encode(newNonce),
-                stateData: window.UnicitySDK.HexConverter.encode(stateData), // Save the actual state data
-                timestamp: Date.now(),
-                submitted: false // Track if actually submitted
-            };
-            localStorage.setItem(pendingTxKey, JSON.stringify(pendingData));
-            
-            // Update status to show pending
-            tokenStatus.pendingTransaction = true;
+        } else if (pendingTx && !pendingTx.submitted) {
+            // We have a pending transaction that wasn't submitted yet - clear it
+            console.log('Clearing unsubmitted pending transaction');
+            localStorage.removeItem(pendingTxKey);
+            tokenStatus.pendingTransaction = false;
             updateTokenStatusDisplay();
         }
+        
+        // Generate new nonce for one-time address
+        newNonce = crypto.getRandomValues(new Uint8Array(32));
+        
+        // Create a new signing service with the new nonce for the new predicate
+        // This is required because MaskedPredicate needs a signing service created with the same nonce
+        const newSigningService = await window.UnicitySDK.SigningService.createFromSecret(privateKeyBytes, newNonce);
+        
+        // Create new masked predicate with new nonce (one-time address)
+        newPredicate = await window.UnicitySDK.MaskedPredicate.create(
+            playerToken.id,
+            playerToken.type,
+            newSigningService,  // Use the new signing service with matching nonce
+            window.UnicitySDK.HashAlgorithm.SHA256,
+            newNonce
+        );
+        
+        // Create new recipient address from the new predicate
+        const recipient = await window.UnicitySDK.DirectAddress.create(newPredicate.reference);
+        
+        // Create transaction data for state update
+        transactionData = await window.UnicitySDK.TransactionData.create(
+            playerToken.state,
+            recipient.toString(),
+            crypto.getRandomValues(new Uint8Array(32)), // salt
+            dataHash,
+            new TextEncoder().encode('State update'),
+            [] // no nametag tokens
+        );
+        
+        // Create commitment
+        commitment = await window.UnicitySDK.Commitment.create(transactionData, signingService);
+        
+        // Save pending transaction BEFORE submitting
+        // Save commitment info and transaction data for recovery
+        const pendingData = {
+            requestId: commitment.requestId.toJSON(), // Save request ID in JSON format
+            transactionData: {
+                // Save data needed to reconstruct transaction data
+                recipientAddress: recipient.toString(),
+                salt: window.UnicitySDK.HexConverter.encode(transactionData.salt),
+                dataHash: dataHash.toJSON(),
+                message: window.UnicitySDK.HexConverter.encode(new TextEncoder().encode('State update'))
+            },
+            newPredicate: newPredicate.toJSON(),
+            newNonce: window.UnicitySDK.HexConverter.encode(newNonce),
+            stateData: window.UnicitySDK.HexConverter.encode(stateData), // Save the actual state data
+            timestamp: Date.now(),
+            submitted: false // Track if actually submitted
+        };
+        localStorage.setItem(pendingTxKey, JSON.stringify(pendingData));
+        console.log('Saved new pending transaction with submitted=false');
+        
+        // Update status to show pending
+        tokenStatus.pendingTransaction = true;
+        updateTokenStatusDisplay();
+        
         
         try {
             // Submit commitment
@@ -3867,16 +4054,22 @@ function startPeriodicUpdates() {
             }
             
             // Mark as submitted immediately after successful submission
-            if (pendingTx) {
-                pendingTx.submitted = true;
-                localStorage.setItem(pendingTxKey, JSON.stringify(pendingTx));
+            const savedPendingData = localStorage.getItem(pendingTxKey);
+            if (savedPendingData) {
+                const pendingDataToUpdate = JSON.parse(savedPendingData);
+                pendingDataToUpdate.submitted = true;
+                localStorage.setItem(pendingTxKey, JSON.stringify(pendingDataToUpdate));
+                console.log('Marked transaction as submitted');
+            } else {
+                console.error('WARNING: No pending transaction found to mark as submitted!');
             }
             
             // Wait for inclusion proof using SDK utility
+            console.log('Waiting for inclusion proof...');
             const inclusionProof = await window.UnicitySDK.waitInclusionProof(
                 client,
                 commitment,
-                AbortSignal.timeout(10000), // 10 second timeout for updates
+                AbortSignal.timeout(30000), // 30 second timeout for submitted transactions
                 1000 // Check every second
             );
             const transaction = await retryOnInclusionProofError(async () => {
@@ -3920,23 +4113,10 @@ function startPeriodicUpdates() {
             const tokenJson = playerToken.toJSON();
             localStorage.setItem('unicityRunner_playerToken', JSON.stringify(tokenJson));
             
-        } catch (error) {
-            // Check if we're recovering a submitted transaction
-            if (error.message === 'RECOVERING_SUBMITTED_TX' && pendingTx) {
-                // Don't count this as a submission attempt
-                tokenStatus.lastError = 'Recovering submitted transaction...';
-                updateTokenStatusDisplay();
-                
-                // We can't poll for inclusion proof without the commitment object
-                // The best we can do is clear the pending transaction and let the user retry
-                console.warn('Found submitted transaction but cannot recover inclusion proof. Clearing pending state.');
-                localStorage.removeItem(pendingTxKey);
-                tokenStatus.pendingTransaction = false;
-                tokenStatus.lastError = 'Previous transaction lost - please try again';
-                updateTokenStatusDisplay();
-                return; // Don't throw, just return
-            }
+            // Reset update flag on success
+            isUpdatingPlayerToken = false;
             
+        } catch (error) {
             // Update status for failure
             tokenStatus.totalSubmissions++;
             tokenStatus.lastError = error.message || 'Transaction failed';
@@ -3946,20 +4126,40 @@ function startPeriodicUpdates() {
             if (error.message && error.message.includes('REQUEST_ID_EXISTS')) {
                 console.error('REQUEST_ID_EXISTS - Transaction was already submitted:', error);
                 
-                // If we have a pending transaction that wasn't marked as submitted,
-                // it means we submitted but crashed before marking it
-                if (pendingTx && !pendingTx.submitted) {
-                    console.warn('Transaction was submitted but not marked. Clearing pending state.');
+                // Load the pending transaction we just saved
+                const savedPendingTx = localStorage.getItem(pendingTxKey);
+                if (savedPendingTx) {
+                    const pendingToUpdate = JSON.parse(savedPendingTx);
+                    if (!pendingToUpdate.submitted) {
+                        console.warn('Transaction was submitted but not marked. Updating pending state.');
+                        // Mark it as submitted and try again next cycle
+                        pendingToUpdate.submitted = true;
+                        localStorage.setItem(pendingTxKey, JSON.stringify(pendingToUpdate));
+                        tokenStatus.lastError = 'Transaction already submitted - will check status next cycle';
+                    } else {
+                        // Already marked as submitted - this shouldn't happen
+                        console.error('Transaction already marked as submitted but got REQUEST_ID_EXISTS');
+                        localStorage.removeItem(pendingTxKey);
+                        tokenStatus.pendingTransaction = false;
+                        tokenStatus.lastError = 'Duplicate transaction - cleared pending state';
+                    }
+                } else {
+                    // No pending transaction found - this shouldn't happen
+                    console.error('No pending transaction found after REQUEST_ID_EXISTS');
+                    tokenStatus.pendingTransaction = false;
+                    tokenStatus.lastError = 'Transaction state lost - please try again';
                 }
-                
-                // Clear the pending transaction as it's unrecoverable
-                localStorage.removeItem(pendingTxKey);
-                tokenStatus.pendingTransaction = false;
-                tokenStatus.lastError = 'Transaction already exists - cleared pending state';
             } else {
                 console.warn('Failed to submit to Unicity network, will retry next time:', error);
             }
+            
+            // Reset update flag on error
+            isUpdatingPlayerToken = false;
+            
             throw error;
+        } finally {
+            // Ensure flag is always reset
+            isUpdatingPlayerToken = false;
         }
     }, 10000); // Every 10 seconds
 }
