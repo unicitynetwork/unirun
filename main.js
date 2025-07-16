@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00043'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00051'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -26,6 +26,7 @@ let droneEntity = null;
 let projectiles = [];
 let currentPlayerHealth = 100; // Track current health during gameplay
 let coins = new Map(); // Track all coins in the world: key = "x,z", value = entity
+let coinsByChunk = new Map(); // Track coins organized by chunk: key = "chunkX,chunkZ", value = Map of coins
 let playerCoins = 0; // Player's coin balance (temporary counter)
 
 // Coin inventory tracking
@@ -2605,16 +2606,46 @@ function setupNoaEngine() {
                 noa.entities.addComponent(coinEntity, 'isCoin', {
                     position: [worldX, worldY, worldZ],
                     collected: false,
-                    value: 1
+                    value: 1,
+                    coinKey: coinKey  // Store the key for efficient removal
                 });
                 
-                // Track coin
+                // Track coin globally and by chunk
                 coins.set(coinKey, coinEntity);
+                
+                // Also track by chunk for efficient processing
+                const chunkKey = `${chunkX},${chunkZ}`;
+                if (!coinsByChunk.has(chunkKey)) {
+                    coinsByChunk.set(chunkKey, new Map());
+                }
+                coinsByChunk.get(chunkKey).set(coinKey, coinEntity);
             }
         });
         
         // tell noa the chunk's terrain data is now set
         noa.world.setChunkData(id, data);
+    });
+    
+    // Handle chunk unloading - clean up coins when chunks are removed
+    noa.world.on('chunkBeingRemoved', function(id, data, x, y, z) {
+        const chunkX = Math.floor(x / 32);
+        const chunkZ = Math.floor(z / 32);
+        const chunkKey = `${chunkX},${chunkZ}`;
+        
+        // Remove all coins from this chunk
+        const chunkCoins = coinsByChunk.get(chunkKey);
+        if (chunkCoins) {
+            chunkCoins.forEach((entity, coinKey) => {
+                // Remove entity if it exists
+                if (noa.entities.hasComponent(entity, noa.entities.names.mesh)) {
+                    noa.ents.deleteEntity(entity);
+                }
+                // Remove from global tracking
+                coins.delete(coinKey);
+            });
+            // Remove chunk from tracking
+            coinsByChunk.delete(chunkKey);
+        }
     });
     
     
@@ -2667,14 +2698,21 @@ function setupNoaEngine() {
             lastPlayerChunkZ = playerChunkZ;
             
             nearbyCoins.clear();
-            coins.forEach((entity, key) => {
-                const pos = noa.entities.getPosition(entity);
-                const chunkX = Math.floor(pos[0] / 32);
-                const chunkZ = Math.floor(pos[2] / 32);
-                
-                // Only track coins in adjacent chunks
-                if (Math.abs(chunkX - playerChunkX) <= 1 && Math.abs(chunkZ - playerChunkZ) <= 1) {
-                    nearbyCoins.add(entity);
+            
+            // Only check current chunk and chunks to the north, east, and west (NOT south)
+            const chunksToCheck = [
+                `${playerChunkX},${playerChunkZ}`,       // Current chunk
+                `${playerChunkX},${playerChunkZ - 1}`,   // North
+                `${playerChunkX + 1},${playerChunkZ}`,   // East  
+                `${playerChunkX - 1},${playerChunkZ}`    // West
+            ];
+            
+            chunksToCheck.forEach(chunkKey => {
+                const chunkCoins = coinsByChunk.get(chunkKey);
+                if (chunkCoins) {
+                    chunkCoins.forEach((entity, coinKey) => {
+                        nearbyCoins.add(entity);
+                    });
                 }
             });
         }
@@ -2734,13 +2772,22 @@ function setupNoaEngine() {
                         startTime: Date.now()
                     });
                     
-                    // Remove from tracking
-                    coins.forEach((entity, key) => {
-                        if (entity === coinEntity) {
-                            coins.delete(key);
-                            nearbyCoins.delete(coinEntity);
+                    // Remove from tracking efficiently using stored key
+                    const storedKey = coinData.coinKey;
+                    if (storedKey) {
+                        coins.delete(storedKey);
+                        nearbyCoins.delete(coinEntity);
+                        
+                        // Also remove from chunk tracking
+                        const [x, z] = storedKey.split(',').map(Number);
+                        const chunkX = Math.floor(x / 32);
+                        const chunkZ = Math.floor(z / 32);
+                        const chunkKey = `${chunkX},${chunkZ}`;
+                        const chunkCoins = coinsByChunk.get(chunkKey);
+                        if (chunkCoins) {
+                            chunkCoins.delete(storedKey);
                         }
-                    });
+                    }
                 }
             }
         });
@@ -2777,26 +2824,54 @@ function setupNoaEngine() {
         coinsToRemove.forEach(entity => flyingCoins.delete(entity));
     });
     
-    // Cleanup non-existent coins periodically
+    // Cleanup non-existent coins periodically - only check nearby chunks
     setInterval(() => {
+        if (!noa || !noa.playerEntity) return;
+        
+        const playerPos = noa.entities.getPosition(noa.playerEntity);
+        const playerChunkX = Math.floor(playerPos[0] / 32);
+        const playerChunkZ = Math.floor(playerPos[2] / 32);
+        
+        // Only clean up coins in chunks within 2 chunks of player
         const toDelete = [];
-        coins.forEach((entity, key) => {
-            if (!noa.entities.hasComponent(entity, noa.entities.names.mesh)) {
-                toDelete.push(key);
+        coinsByChunk.forEach((chunkCoins, chunkKey) => {
+            const [chunkX, chunkZ] = chunkKey.split(',').map(Number);
+            const dx = Math.abs(chunkX - playerChunkX);
+            const dz = Math.abs(chunkZ - playerChunkZ);
+            
+            // Only process nearby chunks
+            if (dx <= 2 && dz <= 2) {
+                chunkCoins.forEach((entity, coinKey) => {
+                    if (!noa.entities.hasComponent(entity, noa.entities.names.mesh)) {
+                        toDelete.push({ coinKey, chunkKey });
+                    }
+                });
             }
         });
-        toDelete.forEach(key => coins.delete(key));
+        
+        toDelete.forEach(({ coinKey, chunkKey }) => {
+            coins.delete(coinKey);
+            const chunkCoins = coinsByChunk.get(chunkKey);
+            if (chunkCoins) {
+                chunkCoins.delete(coinKey);
+                // Clean up empty chunk entries
+                if (chunkCoins.size === 0) {
+                    coinsByChunk.delete(chunkKey);
+                }
+            }
+        });
     }, 5000); // Every 5 seconds
     
     // Update coin visibility based on distance and frustum
     const maxRenderDistance = 32;
     const maxRenderDistanceSq = maxRenderDistance * maxRenderDistance;
     let visibilityUpdateCounter = 0;
+    let lastVisibleChunks = new Set();
     
-    // Update visibility less frequently - every 10 frames
+    // Update visibility less frequently - every 30 frames (2 times per second at 60fps)
     noa.on('beforeRender', function() {
         visibilityUpdateCounter++;
-        if (visibilityUpdateCounter % 10 !== 0) return; // Only run every 10th frame
+        if (visibilityUpdateCounter % 30 !== 0) return; // Only run every 30th frame
         
         if (!noa.playerEntity) return;
         
@@ -2807,45 +2882,66 @@ function setupNoaEngine() {
         const playerChunkX = Math.floor(playerPos[0] / 32);
         const playerChunkZ = Math.floor(playerPos[2] / 32);
         
-        coins.forEach((entity, key) => {
-            if (noa.entities.hasComponent(entity, noa.entities.names.mesh)) {
-                const coinPos = noa.entities.getPosition(entity);
-                
-                // Quick chunk-based culling first
-                const coinChunkX = Math.floor(coinPos[0] / 32);
-                const coinChunkZ = Math.floor(coinPos[2] / 32);
-                const chunkDx = Math.abs(coinChunkX - playerChunkX);
-                const chunkDz = Math.abs(coinChunkZ - playerChunkZ);
-                
-                if (chunkDx > 2 || chunkDz > 2) {
-                    // Far chunks - hide without distance calculation
-                    const meshData = noa.entities.getMeshData(entity);
-                    if (meshData && meshData.mesh) {
-                        meshData.mesh.setEnabled(false);
-                    }
-                    return;
-                }
-                
-                const meshData = noa.entities.getMeshData(entity);
-                if (meshData && meshData.mesh) {
-                    // Calculate distance to player
-                    const dx = coinPos[0] - playerPos[0];
-                    const dy = coinPos[1] - playerPos[1];
-                    const dz = coinPos[2] - playerPos[2];
-                    const distanceSq = dx * dx + dy * dy + dz * dz;
-                    
-                    // Check if within render distance
-                    if (distanceSq <= maxRenderDistanceSq) {
-                        // Check if in camera frustum
-                        const inFrustum = camera.isInFrustum(meshData.mesh);
-                        meshData.mesh.setEnabled(inFrustum);
-                    } else {
-                        // Beyond render distance - hide
-                        meshData.mesh.setEnabled(false);
-                    }
+        // Only process coins in specific chunks relative to player
+        const visibleChunks = new Set([
+            `${playerChunkX},${playerChunkZ}`,       // Current chunk
+            `${playerChunkX},${playerChunkZ - 1}`,   // North
+            `${playerChunkX + 1},${playerChunkZ}`,   // East  
+            `${playerChunkX - 1},${playerChunkZ}`,   // West
+            `${playerChunkX + 1},${playerChunkZ - 1}`, // North-East
+            `${playerChunkX - 1},${playerChunkZ - 1}`, // North-West
+        ]);
+        
+        // Hide coins in chunks that are no longer visible
+        lastVisibleChunks.forEach(chunkKey => {
+            if (!visibleChunks.has(chunkKey)) {
+                const chunkCoins = coinsByChunk.get(chunkKey);
+                if (chunkCoins) {
+                    chunkCoins.forEach((entity) => {
+                        if (noa.entities.hasComponent(entity, noa.entities.names.mesh)) {
+                            const meshData = noa.entities.getMeshData(entity);
+                            if (meshData && meshData.mesh) {
+                                meshData.mesh.setEnabled(false);
+                            }
+                        }
+                    });
                 }
             }
         });
+        
+        // Process coins only in currently visible chunks
+        visibleChunks.forEach(chunkKey => {
+            const chunkCoins = coinsByChunk.get(chunkKey);
+            if (!chunkCoins) return;
+            
+            chunkCoins.forEach((entity) => {
+                if (noa.entities.hasComponent(entity, noa.entities.names.mesh)) {
+                    const coinPos = noa.entities.getPosition(entity);
+                    const meshData = noa.entities.getMeshData(entity);
+                    
+                    if (meshData && meshData.mesh) {
+                        // Calculate distance to player
+                        const dx = coinPos[0] - playerPos[0];
+                        const dy = coinPos[1] - playerPos[1];
+                        const dz = coinPos[2] - playerPos[2];
+                        const distanceSq = dx * dx + dy * dy + dz * dz;
+                        
+                        // Check if within render distance
+                        if (distanceSq <= maxRenderDistanceSq) {
+                            // Check if in camera frustum
+                            const inFrustum = camera.isInFrustum(meshData.mesh);
+                            meshData.mesh.setEnabled(inFrustum);
+                        } else {
+                            // Beyond render distance - hide
+                            meshData.mesh.setEnabled(false);
+                        }
+                    }
+                }
+            });
+        });
+        
+        // Update last visible chunks for next frame
+        lastVisibleChunks = visibleChunks;
     });
     
     // Force chunk generation periodically
@@ -3424,12 +3520,8 @@ function analyzeRoom(playerX, playerZ) {
 
 // Force immediate chunk generation
 function forceChunkGeneration() {
-    // Trigger multiple world ticks to force chunk loading
-    // noa-engine handles chunk loading based on player position automatically
-    for (let i = 0; i < 10; i++) {
-        noa.world.tick();
-    }
-    
+    // Reduced to single tick - noa-engine handles chunk loading automatically
+    noa.world.tick();
 }
 
 // Start periodic state updates
