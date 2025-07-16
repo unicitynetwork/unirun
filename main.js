@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00030'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00031'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -62,11 +62,20 @@ function updateTokenStatusDisplay() {
         }
         
         // Add chunk tokenization queue status
-        if (chunkTokenizationQueue.length > 0 || queueStatus.currentlyProcessing) {
+        if (chunkTokenizationQueue.length > 0 || queueStatus.activeTasks > 0 || queueStatus.totalProcessed > 0) {
             html += '<div class="status-line" style="margin-top: 10px; border-top: 1px solid #555; padding-top: 5px;">Chunk Tokenization:</div>';
             
-            if (queueStatus.currentlyProcessing) {
-                html += `<div class="status-line pending">Processing: ${queueStatus.currentlyProcessing}</div>`;
+            if (queueStatus.activeTasks > 0) {
+                html += `<div class="status-line pending">Active: ${queueStatus.activeTasks}/${MAX_CONCURRENT_TASKS}</div>`;
+                
+                // Show first few active chunks
+                if (queueStatus.currentlyProcessing.length > 0) {
+                    const displayCount = Math.min(3, queueStatus.currentlyProcessing.length);
+                    const chunks = queueStatus.currentlyProcessing.slice(0, displayCount).join(', ');
+                    const moreCount = queueStatus.currentlyProcessing.length - displayCount;
+                    const moreText = moreCount > 0 ? ` +${moreCount} more` : '';
+                    html += `<div class="status-line" style="font-size: 10px;">Processing: ${chunks}${moreText}</div>`;
+                }
             }
             
             if (chunkTokenizationQueue.length > 0) {
@@ -74,7 +83,7 @@ function updateTokenStatusDisplay() {
             }
             
             if (queueStatus.totalProcessed > 0) {
-                html += `<div class="status-line success">Processed: ${queueStatus.totalProcessed}</div>`;
+                html += `<div class="status-line success">Completed: ${queueStatus.totalProcessed}</div>`;
             }
             
             if (queueStatus.totalFailed > 0) {
@@ -95,63 +104,93 @@ const pendingMintTransactions = new Map(); // key: "x,z", value: mint data
 
 // Chunk tokenization queue
 const chunkTokenizationQueue = [];
-let isProcessingQueue = false;
 let queueProcessingPaused = false;
+const MAX_CONCURRENT_TASKS = 128;
+const activeTasks = new Map(); // Track active concurrent tasks
 
 // Queue status for monitoring
 const queueStatus = {
     totalQueued: 0,
     totalProcessed: 0,
     totalFailed: 0,
-    currentlyProcessing: null,
+    activeTasks: 0,
+    currentlyProcessing: [],
     lastProcessedTime: null,
     lastError: null
 };
 
-// Process chunk tokenization queue
+// Process chunk tokenization queue with concurrent tasks
 async function processChunkTokenizationQueue() {
-    if (isProcessingQueue || queueProcessingPaused || chunkTokenizationQueue.length === 0) {
+    if (queueProcessingPaused) {
         return;
     }
     
-    isProcessingQueue = true;
-    
-    while (chunkTokenizationQueue.length > 0 && !queueProcessingPaused) {
+    // Process tasks while queue has items and we haven't reached max concurrent limit
+    while (chunkTokenizationQueue.length > 0 && activeTasks.size < MAX_CONCURRENT_TASKS && !queueProcessingPaused) {
         const task = chunkTokenizationQueue.shift();
-        const { chunkX, chunkZ, addedAt } = task;
+        const { chunkX, chunkZ } = task;
+        const taskKey = `${chunkX},${chunkZ}`;
         
-        queueStatus.currentlyProcessing = `${chunkX},${chunkZ}`;
-        console.log(`Processing chunk tokenization for (${chunkX}, ${chunkZ}) - Queue size: ${chunkTokenizationQueue.length}`);
-        
-        try {
-            // Process the chunk tokenization
-            await tokenizeChunk(chunkX, chunkZ);
-            
-            queueStatus.totalProcessed++;
-            queueStatus.lastProcessedTime = Date.now();
-            console.log(`Successfully tokenized chunk (${chunkX}, ${chunkZ}) - Processed: ${queueStatus.totalProcessed}, Remaining: ${chunkTokenizationQueue.length}`);
-        } catch (error) {
-            queueStatus.totalFailed++;
-            queueStatus.lastError = `Chunk (${chunkX}, ${chunkZ}): ${error.message}`;
-            console.error(`Failed to tokenize chunk (${chunkX}, ${chunkZ}):`, error);
-            
-            // Optionally re-queue failed chunks with retry limit
-            if (task.retryCount === undefined) task.retryCount = 0;
-            if (task.retryCount < 3) {
-                task.retryCount++;
-                console.log(`Re-queuing chunk (${chunkX}, ${chunkZ}) for retry ${task.retryCount}/3`);
-                chunkTokenizationQueue.push(task);
-            }
+        // Skip if already being processed
+        if (activeTasks.has(taskKey)) {
+            continue;
         }
         
-        // Add a small delay between processing to avoid overwhelming the system
-        await new Promise(resolve => setTimeout(resolve, 100));
+        // Create async task
+        const taskPromise = processChunkTask(task);
+        activeTasks.set(taskKey, taskPromise);
+        
+        // Update status
+        queueStatus.activeTasks = activeTasks.size;
+        queueStatus.currentlyProcessing = Array.from(activeTasks.keys());
+        
+        // Clean up when task completes
+        taskPromise.finally(() => {
+            activeTasks.delete(taskKey);
+            queueStatus.activeTasks = activeTasks.size;
+            queueStatus.currentlyProcessing = Array.from(activeTasks.keys());
+            
+            // Try to process more tasks
+            if (!queueProcessingPaused) {
+                processChunkTokenizationQueue();
+            }
+        });
     }
+}
+
+// Process individual chunk task
+async function processChunkTask(task) {
+    const { chunkX, chunkZ } = task;
     
-    queueStatus.currentlyProcessing = null;
-    isProcessingQueue = false;
+    console.log(`Processing chunk tokenization for (${chunkX}, ${chunkZ}) - Active: ${activeTasks.size}/${MAX_CONCURRENT_TASKS}, Queue: ${chunkTokenizationQueue.length}`);
     
-    console.log(`Queue processing complete. Total processed: ${queueStatus.totalProcessed}, Failed: ${queueStatus.totalFailed}`);
+    try {
+        // Process the chunk tokenization
+        await tokenizeChunk(chunkX, chunkZ);
+        
+        queueStatus.totalProcessed++;
+        queueStatus.lastProcessedTime = Date.now();
+        console.log(`Successfully tokenized chunk (${chunkX}, ${chunkZ}) - Total processed: ${queueStatus.totalProcessed}`);
+    } catch (error) {
+        queueStatus.totalFailed++;
+        queueStatus.lastError = `Chunk (${chunkX}, ${chunkZ}): ${error.message}`;
+        console.error(`Failed to tokenize chunk (${chunkX}, ${chunkZ}):`, error);
+        
+        // Re-queue failed chunks with retry limit
+        if (task.retryCount === undefined) task.retryCount = 0;
+        if (task.retryCount < 3) {
+            task.retryCount++;
+            console.log(`Re-queuing chunk (${chunkX}, ${chunkZ}) for retry ${task.retryCount}/3`);
+            
+            // Add back to queue with a delay
+            setTimeout(() => {
+                if (!queueProcessingPaused) {
+                    chunkTokenizationQueue.push(task);
+                    processChunkTokenizationQueue();
+                }
+            }, 1000 * task.retryCount); // Exponential backoff
+        }
+    }
 }
 
 // Add chunk to tokenization queue
@@ -193,6 +232,11 @@ window.addEventListener('beforeunload', () => {
     // Pause queue processing
     queueProcessingPaused = true;
     
+    // Log active tasks
+    if (activeTasks.size > 0) {
+        console.log(`WARNING: ${activeTasks.size} chunk tokenization tasks still active during unload`);
+    }
+    
     if (pendingMintTransactions.size > 0) {
         console.log(`Saving ${pendingMintTransactions.size} pending mint transactions before unload...`);
         
@@ -209,10 +253,23 @@ window.addEventListener('beforeunload', () => {
         });
     }
     
-    // Save queue state
-    if (chunkTokenizationQueue.length > 0) {
-        console.log(`Saving ${chunkTokenizationQueue.length} queued chunks for later processing`);
-        localStorage.setItem('chunkTokenizationQueue', JSON.stringify(chunkTokenizationQueue));
+    // Save queue state including active tasks
+    const tasksToSave = [...chunkTokenizationQueue];
+    
+    // Add active tasks back to queue for next session
+    activeTasks.forEach((promise, taskKey) => {
+        const [x, z] = taskKey.split(',').map(Number);
+        tasksToSave.push({
+            chunkX: x,
+            chunkZ: z,
+            addedAt: Date.now(),
+            wasActive: true
+        });
+    });
+    
+    if (tasksToSave.length > 0) {
+        console.log(`Saving ${tasksToSave.length} chunks (${chunkTokenizationQueue.length} queued + ${activeTasks.size} active) for later processing`);
+        localStorage.setItem('chunkTokenizationQueue', JSON.stringify(tasksToSave));
     }
 });
 
