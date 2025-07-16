@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00052'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00060'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -14,6 +14,7 @@ let signingService;
 
 // Track chunks being tokenized to prevent concurrent processing
 const chunksBeingTokenized = new Map(); // key: "x,z", value: Promise
+const generatedCoins = new Set(); // Track all coin positions ever generated: "worldX,worldZ"
 
 // Block IDs (will be set during engine setup)
 let roomFloorID;
@@ -2230,13 +2231,23 @@ function setupNoaEngine() {
     // Drone will be created after player spawn is finalized
     
     
+    // Track worldDataNeeded calls
+    let worldDataNeededCalls = 0;
+    let totalEntitiesCreated = 0;
+    
     // Set up world generation with rooms and corridors
     noa.world.on('worldDataNeeded', async function (id, data, x, y, z) {
+        worldDataNeededCalls++;
         const chunkSize = data.shape[0];
         
         // Calculate which chunk we're in
         const chunkX = Math.floor(x / chunkSize);
         const chunkZ = Math.floor(z / chunkSize);
+        
+        // Log every 10th call
+        if (worldDataNeededCalls % 10 === 0) {
+            console.log(`worldDataNeeded called ${worldDataNeededCalls} times`);
+        }
         
         // Queue chunk for tokenization (non-blocking)
         if (localStorage.getItem('unicityRunner_privateKey')) {
@@ -2573,7 +2584,8 @@ function setupNoaEngine() {
             });
         }
         
-        // Create coin entities for this chunk
+        // Create coin entities for this chunk, checking each position
+        let coinsCreated = 0;
         coinPositions.forEach(coinPos => {
             const worldX = x + coinPos.x;
             const worldZ = z + coinPos.z;
@@ -2581,26 +2593,41 @@ function setupNoaEngine() {
             
             const coinKey = `${worldX},${worldZ}`; // Use only X,Z for key since Y is constant
             
-            // Check if coin already exists at this position
+            // Check if we've ever generated a coin at this position
+            if (generatedCoins.has(coinKey)) {
+                return; // Skip - coin was already generated here
+            }
+            
+            // Mark this position as having a coin generated
+            generatedCoins.add(coinKey);
+            
+            // Check if coin entity already exists at this position (shouldn't happen now)
             if (!coins.has(coinKey)) {
-                // Create coin entity using proper components
-                const coinEntity = noa.entities.add([worldX + 0.5, worldY + 0.5, worldZ + 0.5]);
+                coinsCreated++;
+                // Create coin entity with proper parameters
+                // Parameters: position, width, height, mesh, meshOffset, doPhysics, shadow
+                const coinEntity = noa.entities.add(
+                    [worldX + 0.5, worldY + 0.5, worldZ + 0.5], // position
+                    0.5, // width
+                    0.5, // height
+                    null, // mesh (will be added later)
+                    [0, 0, 0], // meshOffset
+                    false, // doPhysics - no physics for coins
+                    false  // shadow
+                );
+                totalEntitiesCreated++;
                 
-                // Add mesh component using instance instead of clone for better performance
-                const coinInstance = coinMesh.createInstance('coin_' + coinKey);
-                coinInstance.rotation.z = Math.PI / 2; // Rotate 90 degrees to stand vertically
-                coinInstance.rotation.y = Math.PI / 2; // Turn 90 degrees so coin faces sideways
-                coinInstance.setEnabled(true);
-                noa.entities.addComponent(coinEntity, noa.entities.names.mesh, {
-                    mesh: coinInstance,
-                    offset: [0, 0.25, 0] // Additional offset to ensure coin is above floor
-                });
+                // Verify entity was created
+                if (!coinEntity) {
+                    console.error(`Failed to create coin entity at ${worldX}, ${worldZ}`);
+                    return;
+                }
                 
-                // Make it non-solid and disable physics to keep vertical position
-                noa.entities.addComponent(coinEntity, noa.entities.names.collideTerrain, false);
-                noa.entities.addComponent(coinEntity, noa.entities.names.collideEntities, false);
-                noa.entities.addComponent(coinEntity, noa.entities.names.physics, {
-                    gravityMultiplier: 0 // No gravity - coin stays at fixed height
+                // Don't create mesh immediately - will be created when coin is visible
+                // Store coin data for later mesh creation
+                noa.entities.addComponent(coinEntity, 'pendingMesh', {
+                    meshName: 'coin_' + coinKey,
+                    needsMesh: true
                 });
                 
                 // Add custom coin component for tracking
@@ -2633,8 +2660,49 @@ function setupNoaEngine() {
             }
         });
         
+        // Debug: Log actual coin creation
+        if (coinsCreated > 0) {
+            console.log(`Created ${coinsCreated} new coins for chunk (${chunkX}, ${chunkZ}). Total coins: ${coins.size}, Total generated positions: ${generatedCoins.size}`);
+        }
+        
         // tell noa the chunk's terrain data is now set
         noa.world.setChunkData(id, data);
+    });
+    
+    // Animate flying coins - MUST be outside worldDataNeeded to avoid duplicate listeners!
+    noa.on('tick', function() {
+        const currentTime = Date.now();
+        const coinsToRemove = [];
+        
+        flyingCoins.forEach((flyData, coinEntity) => {
+            const elapsed = (currentTime - flyData.startTime) / 1000; // seconds
+            const flySpeed = 15; // blocks per second
+            const newY = flyData.startY + (flySpeed * elapsed);
+            
+            if (newY >= 25) {
+                // Reached max height, remove coin
+                // Dispose of the mesh first
+                const meshData = noa.entities.getMeshData(coinEntity);
+                if (meshData && meshData.mesh) {
+                    meshData.mesh.dispose();
+                }
+                noa.ents.deleteEntity(coinEntity);
+                coinsToRemove.push(coinEntity);
+            } else {
+                // Update position
+                const pos = noa.entities.getPosition(coinEntity);
+                noa.entities.setPosition(coinEntity, pos[0], newY, pos[2]);
+                
+                // Make coin spin faster as it flies up
+                const meshData = noa.entities.getMeshData(coinEntity);
+                if (meshData && meshData.mesh) {
+                    meshData.mesh.rotation.y += 0.3;
+                }
+            }
+        });
+        
+        // Clean up completed animations
+        coinsToRemove.forEach(entity => flyingCoins.delete(entity));
     });
     
     // Handle chunk unloading - clean up coins when chunks are removed
@@ -2646,9 +2714,15 @@ function setupNoaEngine() {
         // Remove all coins from this chunk
         const chunkCoins = coinsByChunk.get(chunkKey);
         if (chunkCoins) {
+            console.log(`Removing ${chunkCoins.size} coins from chunk (${chunkX}, ${chunkZ})`);
             chunkCoins.forEach((entity, coinKey) => {
                 // Remove entity if it exists
                 if (noa.entities.hasComponent(entity, noa.entities.names.mesh)) {
+                    // Dispose of the Babylon.js mesh instance first
+                    const meshData = noa.entities.getMeshData(entity);
+                    if (meshData && meshData.mesh) {
+                        meshData.mesh.dispose();
+                    }
                     noa.ents.deleteEntity(entity);
                 }
                 // Remove from global tracking
@@ -2657,6 +2731,8 @@ function setupNoaEngine() {
             // Remove chunk from tracking
             coinsByChunk.delete(chunkKey);
             chunkNeighbors.delete(chunkKey);
+            // Note: We intentionally don't remove coins from generatedCoins Set
+            // This ensures coins are never duplicated even if chunks are reloaded
         }
     });
     
@@ -2668,6 +2744,15 @@ function setupNoaEngine() {
             position: null,
             collected: false,
             value: 1
+        }
+    });
+    
+    // Register pending mesh component for lazy mesh creation
+    noa.ents.createComponent({
+        name: 'pendingMesh',
+        state: {
+            meshName: '',
+            needsMesh: true
         }
     });
     
@@ -2696,9 +2781,24 @@ function setupNoaEngine() {
     const nearbyCoins = new Set(); // Track only nearby coins
     let lastPlayerChunkX = null;
     let lastPlayerChunkZ = null;
+    let collectionCheckCount = 0;
     
-    setInterval(() => {
+    // Add memory tracking
+    let memoryStats = {
+        startTime: Date.now(),
+        initialCoinsSize: 0,
+        initialCoinsByChunkSize: 0,
+        totalCoinsInChunks: 0,
+        totalEntities: 0,
+        initialized: false
+    };
+    
+    // DISABLED: Coin collection check to isolate performance issue
+    /*setInterval(() => {
         if (!noa || !noa.playerEntity) return;
+        
+        const startTime = performance.now();
+        collectionCheckCount++;
         
         const playerPos = noa.entities.getPosition(noa.playerEntity);
         const playerChunkX = Math.floor(playerPos[0] / 32);
@@ -2711,22 +2811,35 @@ function setupNoaEngine() {
             
             nearbyCoins.clear();
             
-            // Only check current chunk and chunks to the north, east, and west (NOT south)
-            const chunksToCheck = [
-                `${playerChunkX},${playerChunkZ}`,       // Current chunk
-                `${playerChunkX},${playerChunkZ - 1}`,   // North
-                `${playerChunkX + 1},${playerChunkZ}`,   // East  
-                `${playerChunkX - 1},${playerChunkZ}`    // West
-            ];
+            // Use pre-computed neighbors for current chunk
+            const currentChunkKey = `${playerChunkX},${playerChunkZ}`;
             
-            chunksToCheck.forEach(chunkKey => {
-                const chunkCoins = coinsByChunk.get(chunkKey);
-                if (chunkCoins) {
-                    chunkCoins.forEach((entity, coinKey) => {
-                        nearbyCoins.add(entity);
-                    });
-                }
-            });
+            // Add coins from current chunk
+            const currentChunkCoins = coinsByChunk.get(currentChunkKey);
+            if (currentChunkCoins) {
+                currentChunkCoins.forEach((entity) => {
+                    nearbyCoins.add(entity);
+                });
+            }
+            
+            // Add coins from pre-computed neighbors (North, East, West only)
+            const neighbors = chunkNeighbors.get(currentChunkKey);
+            if (neighbors) {
+                // Only check North, East, West neighbors for collection
+                [`${playerChunkX},${playerChunkZ - 1}`,   // North
+                 `${playerChunkX + 1},${playerChunkZ}`,   // East  
+                 `${playerChunkX - 1},${playerChunkZ}`    // West
+                ].forEach(neighborKey => {
+                    if (neighbors.has(neighborKey)) {
+                        const neighborCoins = coinsByChunk.get(neighborKey);
+                        if (neighborCoins) {
+                            neighborCoins.forEach((entity) => {
+                                nearbyCoins.add(entity);
+                            });
+                        }
+                    }
+                });
+            }
         }
         
         // Get player movement direction
@@ -2736,18 +2849,43 @@ function setupNoaEngine() {
         const forwardZ = Math.cos(heading);
         
         // Only check nearby coins
-        nearbyCoins.forEach((coinEntity) => {
-            // Skip if already flying
-            if (flyingCoins.has(coinEntity)) return;
+        let coinsProcessed = 0;
+        let getPositionTime = 0;
+        
+        // Convert to array to avoid iterator invalidation when deleting
+        const nearbyCoinsArray = Array.from(nearbyCoins);
+        for (let i = 0; i < nearbyCoinsArray.length; i++) {
+            const coinEntity = nearbyCoinsArray[i];
             
+            // Skip if already flying (don't even count as processed)
+            if (flyingCoins.has(coinEntity)) {
+                // Remove flying coins from nearbyCoins to prevent repeated checks
+                nearbyCoins.delete(coinEntity);
+                continue;
+            }
+            
+            coinsProcessed++;
+            
+            // Check if entity still exists
+            if (!noa.entities.hasComponent(coinEntity, noa.entities.names.position)) {
+                // Dead entity - remove it
+                nearbyCoins.delete(coinEntity);
+                continue;
+            }
+            
+            const posStart = performance.now();
             const coinPos = noa.entities.getPosition(coinEntity);
+            getPositionTime += performance.now() - posStart;
             
             // Calculate distance between player and coin
-            const dx = playerPos[0] - coinPos[0];
-            const dy = playerPos[1] - coinPos[1];
-            const dz = playerPos[2] - coinPos[2];
+            const dx = coinPos[0] - playerPos[0];
+            const dy = coinPos[1] - playerPos[1];
+            const dz = coinPos[2] - playerPos[2];
             
-            // Quick distance check first
+            // Taxicab distance check - skip coins outside 8x8x8 box around player
+            if (Math.abs(dx) > 8 || Math.abs(dy) > 8 || Math.abs(dz) > 8) return;
+            
+            // Closer taxicab distance check for actual collection
             if (Math.abs(dx) > 2 || Math.abs(dy) > 2 || Math.abs(dz) > 2) return;
             
             // Project coin offset onto forward direction
@@ -2788,6 +2926,8 @@ function setupNoaEngine() {
                     const storedKey = coinData.coinKey;
                     if (storedKey) {
                         coins.delete(storedKey);
+                        
+                        // CRITICAL: Remove from nearbyCoins immediately
                         nearbyCoins.delete(coinEntity);
                         
                         // Also remove from chunk tracking
@@ -2802,42 +2942,63 @@ function setupNoaEngine() {
                     }
                 }
             }
-        });
-    }, 100); // Check every 100ms (reduced from 50ms)
-    
-    // Animate flying coins
-    noa.on('tick', function() {
-        const currentTime = Date.now();
-        const coinsToRemove = [];
+        }
         
-        flyingCoins.forEach((flyData, coinEntity) => {
-            const elapsed = (currentTime - flyData.startTime) / 1000; // seconds
-            const flySpeed = 15; // blocks per second
-            const newY = flyData.startY + (flySpeed * elapsed);
-            
-            if (newY >= 25) {
-                // Reached max height, remove coin
-                noa.ents.deleteEntity(coinEntity);
-                coinsToRemove.push(coinEntity);
-            } else {
-                // Update position
-                const pos = noa.entities.getPosition(coinEntity);
-                noa.entities.setPosition(coinEntity, pos[0], newY, pos[2]);
-                
-                // Make coin spin faster as it flies up
-                const meshData = noa.entities.getMeshData(coinEntity);
-                if (meshData && meshData.mesh) {
-                    meshData.mesh.rotation.y += 0.3;
-                }
+        // Performance debugging
+        const elapsed = performance.now() - startTime;
+        if (collectionCheckCount % 10 === 0 || elapsed > 10) { // Log every second or if slow
+            // Initialize memory stats on first run
+            if (!memoryStats.initialized) {
+                memoryStats.initialized = true;
+                memoryStats.initialCoinsSize = coins.size;
+                memoryStats.initialCoinsByChunkSize = coinsByChunk.size;
             }
-        });
-        
-        // Clean up completed animations
-        coinsToRemove.forEach(entity => flyingCoins.delete(entity));
-    });
+            
+            // Count total coins in chunks
+            let totalCoinsInChunks = 0;
+            coinsByChunk.forEach(chunkCoins => {
+                totalCoinsInChunks += chunkCoins.size;
+            });
+            
+            // Count total entities
+            let totalEntities = 0;
+            if (noa.entities && noa.entities.entities) {
+                totalEntities = Object.keys(noa.entities.entities).length;
+            }
+            
+            const timeRunning = ((Date.now() - memoryStats.startTime) / 1000).toFixed(1);
+            
+            console.log(`[${timeRunning}s] Coin check #${collectionCheckCount}: ${elapsed.toFixed(2)}ms`);
+            console.log(`  - nearbyCoins: ${nearbyCoins.size} (processed ${coinsProcessed})`);
+            console.log(`  - flyingCoins: ${flyingCoins.size}`);
+            console.log(`  - coins Map: ${coins.size} (initial: ${memoryStats.initialCoinsSize})`);
+            console.log(`  - coinsByChunk: ${coinsByChunk.size} chunks, ${totalCoinsInChunks} total coins`);
+            console.log(`  - generatedCoins Set: ${generatedCoins.size} positions tracked`);
+            console.log(`  - Total entities in engine: ${totalEntities}`);
+            console.log(`  - getPosition time: ${getPositionTime.toFixed(2)}ms`);
+            
+            // Check for growth
+            if (memoryStats.totalCoinsInChunks > 0 && totalCoinsInChunks > memoryStats.totalCoinsInChunks + 100) {
+                console.warn(`WARNING: Coins in chunks grew by ${totalCoinsInChunks - memoryStats.totalCoinsInChunks}`);
+            }
+            if (memoryStats.totalEntities > 0 && totalEntities > memoryStats.totalEntities + 100) {
+                console.warn(`WARNING: Total entities grew by ${totalEntities - memoryStats.totalEntities}`);
+            }
+            
+            memoryStats.totalCoinsInChunks = totalCoinsInChunks;
+            memoryStats.totalEntities = totalEntities;
+            
+            if (elapsed > 10) {
+                console.warn(`SLOW FRAME! Coin collection took ${elapsed.toFixed(2)}ms`);
+            }
+        }
+    }, 100); // Check every 100ms (reduced from 50ms)*/
+    
+    // Moved outside of worldDataNeeded - see line after world generation setup
     
     // Cleanup non-existent coins periodically - only check nearby chunks
-    setInterval(() => {
+    // DISABLED: This might be causing performance issues
+    /*setInterval(() => {
         if (!noa || !noa.playerEntity) return;
         
         const playerPos = noa.entities.getPosition(noa.playerEntity);
@@ -2872,7 +3033,7 @@ function setupNoaEngine() {
                 }
             }
         });
-    }, 5000); // Every 5 seconds
+    }, 5000); // Every 5 seconds*/
     
     // Update coin visibility based on distance and frustum
     const maxRenderDistance = 24; // Reduced from 32
@@ -2913,7 +3074,12 @@ function setupNoaEngine() {
             // Add coins from current chunk
             const currentChunkCoins = coinsByChunk.get(playerChunkKey);
             if (currentChunkCoins) {
-                currentChunkCoins.forEach(entity => currentVisibleCoins.add(entity));
+                currentChunkCoins.forEach((entity, coinKey) => {
+                    // Check if entity actually exists
+                    if (noa.entities.hasComponent(entity, noa.entities.names.position)) {
+                        currentVisibleCoins.add(entity);
+                    }
+                });
             }
             
             // Add coins from pre-computed neighbor chunks
@@ -2922,7 +3088,12 @@ function setupNoaEngine() {
                 neighbors.forEach(neighborKey => {
                     const neighborCoins = coinsByChunk.get(neighborKey);
                     if (neighborCoins) {
-                        neighborCoins.forEach(entity => currentVisibleCoins.add(entity));
+                        neighborCoins.forEach((entity, coinKey) => {
+                            // Check if entity actually exists
+                            if (noa.entities.hasComponent(entity, noa.entities.names.position)) {
+                                currentVisibleCoins.add(entity);
+                            }
+                        });
                     }
                 });
             }
@@ -2930,28 +3101,67 @@ function setupNoaEngine() {
         
         // Update visibility only for coins in visible set
         const camera = noa.rendering.camera;
+        
+        // Debug: Log how many coins we're processing
+        if (visibilityUpdateCounter % 300 === 0) { // Every 10 seconds at 60fps
+            console.log(`Processing ${currentVisibleCoins.size} visible coins, Total coins: ${coins.size}, Total chunks: ${coinsByChunk.size}`);
+        }
+        
+        // Track processing time
+        let processedCount = 0;
+        let skippedCount = 0;
+        const visStartTime = performance.now();
+        
         currentVisibleCoins.forEach(entity => {
-            if (noa.entities.hasComponent(entity, noa.entities.names.mesh)) {
-                const coinPos = noa.entities.getPosition(entity);
-                const meshData = noa.entities.getMeshData(entity);
+            // Check if entity needs a mesh created
+            if (noa.entities.hasComponent(entity, 'pendingMesh')) {
+                const pendingData = noa.entities.getState(entity, 'pendingMesh');
+                if (pendingData.needsMesh) {
+                    // Create mesh on demand
+                    const coinInstance = coinMesh.createInstance(pendingData.meshName);
+                    coinInstance.rotation.z = Math.PI / 2;
+                    coinInstance.rotation.y = Math.PI / 2;
+                    coinInstance.setEnabled(true);
+                    noa.entities.addComponent(entity, noa.entities.names.mesh, {
+                        mesh: coinInstance,
+                        offset: [0, 0.25, 0]
+                    });
+                    // Remove pending mesh component
+                    noa.entities.removeComponent(entity, 'pendingMesh');
+                }
+            }
+            
+            if (!noa.entities.hasComponent(entity, noa.entities.names.mesh)) {
+                skippedCount++;
+                return;
+            }
+            processedCount++;
+            
+            const coinPos = noa.entities.getPosition(entity);
+            const meshData = noa.entities.getMeshData(entity);
+            
+            if (meshData && meshData.mesh) {
+                // Calculate distance to player
+                const dx = coinPos[0] - playerPos[0];
+                const dz = coinPos[2] - playerPos[2];
+                const distanceSq = dx * dx + dz * dz;
                 
-                if (meshData && meshData.mesh) {
-                    // Calculate distance to player
-                    const dx = coinPos[0] - playerPos[0];
-                    const dz = coinPos[2] - playerPos[2];
-                    const distanceSq = dx * dx + dz * dz;
-                    
-                    // Simple distance check (no Y component for performance)
-                    if (distanceSq <= maxRenderDistanceSq) {
-                        // Check if in camera frustum
-                        const inFrustum = camera.isInFrustum(meshData.mesh);
-                        meshData.mesh.setEnabled(inFrustum);
-                    } else {
-                        meshData.mesh.setEnabled(false);
-                    }
+                // Simple distance check (no Y component for performance)
+                if (distanceSq <= maxRenderDistanceSq) {
+                    // Check if in camera frustum
+                    const inFrustum = camera.isInFrustum(meshData.mesh);
+                    meshData.mesh.setEnabled(inFrustum);
+                } else {
+                    meshData.mesh.setEnabled(false);
                 }
             }
         });
+        
+        // Log visibility processing time
+        const visElapsed = performance.now() - visStartTime;
+        if (visElapsed > 10 || visibilityUpdateCounter % 300 === 0) {
+            console.log(`Visibility update: ${visElapsed.toFixed(2)}ms, processed ${processedCount} coins, skipped ${skippedCount} non-existent`);
+        }
     });
     
     // Force chunk generation periodically
@@ -2960,6 +3170,45 @@ function setupNoaEngine() {
             forceChunkGeneration();
         }
     }, 5000); // Every 5 seconds
+    
+    // Performance debugging - log every 5 seconds
+    setInterval(() => {
+        // Count mesh instances
+        let meshCount = 0;
+        let totalMeshes = 0;
+        const scene = noa.rendering.getScene();
+        if (scene) {
+            totalMeshes = scene.meshes.length;
+            scene.meshes.forEach(mesh => {
+                if (mesh.name && mesh.name.startsWith('coin_')) {
+                    meshCount++;
+                }
+            });
+        }
+        
+        // Count entities
+        let entityCount = 0;
+        if (noa.entities) {
+            // Count all entities that have a position component
+            for (let i = 0; i < 10000; i++) {
+                if (noa.entities.hasComponent(i, noa.entities.names.position)) {
+                    entityCount++;
+                }
+            }
+        }
+        
+        console.log(`Performance check:
+  - worldDataNeeded calls: ${worldDataNeededCalls}
+  - Total entities created: ${totalEntitiesCreated}
+  - Total meshes in scene: ${totalMeshes}
+  - Total entities: ${entityCount}
+  - coins Map: ${coins.size}
+  - coinsByChunk: ${coinsByChunk.size} chunks
+  - generatedCoins: ${generatedCoins.size} positions
+  - currentVisibleCoins: ${currentVisibleCoins.size}
+  - flyingCoins: ${flyingCoins.size}
+  - Coin mesh instances: ${meshCount}`);
+    }, 5000);
     
     // Check player position and rotate to face corridor direction
     setInterval(() => {

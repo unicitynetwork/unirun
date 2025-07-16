@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Clear LocalStorage</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 10px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        .danger {
+            background-color: #ff4444;
+            color: white;
+        }
+        .safe {
+            background-color: #44ff44;
+            color: black;
+        }
+        pre {
+            background-color: #f0f0f0;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>LocalStorage Management</h1>
+    
+    <h2>Current Storage Usage:</h2>
+    <div id="storageInfo"></div>
+    
+    <h2>Actions:</h2>
+    <button class="safe" onclick="showStorage()">Show Storage Contents</button>
+    <button class="safe" onclick="clearTransactions()">Clear Only Transactions</button>
+    <button class="danger" onclick="clearAll()">Clear ALL LocalStorage</button>
+    
+    <h2>Output:</h2>
+    <pre id="output"></pre>
+    
+    <script>
+        function getStorageSize() {
+            let total = 0;
+            for (let key in localStorage) {
+                if (localStorage.hasOwnProperty(key)) {
+                    total += localStorage[key].length + key.length;
+                }
+            }
+            return total;
+        }
+        
+        function updateStorageInfo() {
+            const size = getStorageSize();
+            const sizeMB = (size / 1024 / 1024).toFixed(2);
+            const keys = Object.keys(localStorage);
+            document.getElementById('storageInfo').innerHTML = `
+                <p>Total size: ${size} bytes (${sizeMB} MB)</p>
+                <p>Number of keys: ${keys.length}</p>
+            `;
+        }
+        
+        function showStorage() {
+            const output = document.getElementById('output');
+            let text = 'LocalStorage contents:\n\n';
+            
+            for (let key in localStorage) {
+                if (localStorage.hasOwnProperty(key)) {
+                    const value = localStorage[key];
+                    const size = (value.length / 1024).toFixed(2);
+                    text += `Key: ${key}\n`;
+                    text += `Size: ${size} KB\n`;
+                    if (value.length < 200) {
+                        text += `Value: ${value}\n`;
+                    } else {
+                        text += `Value: ${value.substring(0, 200)}... (truncated)\n`;
+                    }
+                    text += '\n---\n\n';
+                }
+            }
+            
+            output.textContent = text;
+            updateStorageInfo();
+        }
+        
+        function clearTransactions() {
+            const output = document.getElementById('output');
+            let cleared = 0;
+            let text = 'Clearing transaction-related data...\n\n';
+            
+            const keysToDelete = [];
+            for (let key in localStorage) {
+                if (key.includes('mintTransaction') || 
+                    key.includes('Transaction') || 
+                    key.includes('_tx_') ||
+                    key.includes('chunk_token_') ||
+                    key.includes('UnicitySDK')) {
+                    keysToDelete.push(key);
+                }
+            }
+            
+            keysToDelete.forEach(key => {
+                localStorage.removeItem(key);
+                cleared++;
+                text += `Removed: ${key}\n`;
+            });
+            
+            text += `\nCleared ${cleared} transaction-related items.`;
+            output.textContent = text;
+            updateStorageInfo();
+        }
+        
+        function clearAll() {
+            if (confirm('Are you sure you want to clear ALL localStorage data? This will reset your game progress!')) {
+                const count = Object.keys(localStorage).length;
+                localStorage.clear();
+                document.getElementById('output').textContent = `Cleared all ${count} items from localStorage.`;
+                updateStorageInfo();
+            }
+        }
+        
+        // Initial update
+        updateStorageInfo();
+    </script>
+</body>
+</html>
