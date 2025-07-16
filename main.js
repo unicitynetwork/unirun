@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00067'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00068'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -3777,9 +3777,19 @@ function startPeriodicUpdates() {
                     [] // no nametag tokens
                 );
                 
-                // Recreate commitment using the current signing service
-                // (which has the nonce matching the current token's predicate)
-                commitment = await window.UnicitySDK.Commitment.create(transactionData, signingService);
+                // Check if transaction was already submitted
+                if (pending.submitted) {
+                    // Transaction was already submitted - we need to recover it
+                    // Skip creating a new commitment and go straight to polling
+                    pendingTx = pending;
+                    
+                    // We'll need to poll for inclusion proof without the commitment object
+                    // This is handled in the catch block for REQUEST_ID_EXISTS
+                    throw new Error('RECOVERING_SUBMITTED_TX');
+                } else {
+                    // Transaction was not submitted yet - recreate commitment
+                    commitment = await window.UnicitySDK.Commitment.create(transactionData, signingService);
+                }
                 
                 // Override stateData with the saved one
                 stateData = savedStateData;
@@ -3838,7 +3848,8 @@ function startPeriodicUpdates() {
                 newPredicate: newPredicate.toJSON(),
                 newNonce: window.UnicitySDK.HexConverter.encode(newNonce),
                 stateData: window.UnicitySDK.HexConverter.encode(stateData), // Save the actual state data
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                submitted: false // Track if actually submitted
             };
             localStorage.setItem(pendingTxKey, JSON.stringify(pendingData));
             
@@ -3853,6 +3864,12 @@ function startPeriodicUpdates() {
             
             if (response.status !== window.UnicitySDK.SubmitCommitmentStatus.SUCCESS) {
                 throw new Error(`Failed to submit transaction commitment: ${response.status}`);
+            }
+            
+            // Mark as submitted immediately after successful submission
+            if (pendingTx) {
+                pendingTx.submitted = true;
+                localStorage.setItem(pendingTxKey, JSON.stringify(pendingTx));
             }
             
             // Wait for inclusion proof using SDK utility
@@ -3904,17 +3921,41 @@ function startPeriodicUpdates() {
             localStorage.setItem('unicityRunner_playerToken', JSON.stringify(tokenJson));
             
         } catch (error) {
+            // Check if we're recovering a submitted transaction
+            if (error.message === 'RECOVERING_SUBMITTED_TX' && pendingTx) {
+                // Don't count this as a submission attempt
+                tokenStatus.lastError = 'Recovering submitted transaction...';
+                updateTokenStatusDisplay();
+                
+                // We can't poll for inclusion proof without the commitment object
+                // The best we can do is clear the pending transaction and let the user retry
+                console.warn('Found submitted transaction but cannot recover inclusion proof. Clearing pending state.');
+                localStorage.removeItem(pendingTxKey);
+                tokenStatus.pendingTransaction = false;
+                tokenStatus.lastError = 'Previous transaction lost - please try again';
+                updateTokenStatusDisplay();
+                return; // Don't throw, just return
+            }
+            
             // Update status for failure
             tokenStatus.totalSubmissions++;
             tokenStatus.lastError = error.message || 'Transaction failed';
             updateTokenStatusDisplay();
             
-            // Check for REQUEST_ID_EXISTS - this should never happen with our approach
+            // Check for REQUEST_ID_EXISTS - this means we lost track of a submitted transaction
             if (error.message && error.message.includes('REQUEST_ID_EXISTS')) {
-                console.error('CRITICAL ERROR: REQUEST_ID_EXISTS - Transaction was lost!', error);
+                console.error('REQUEST_ID_EXISTS - Transaction was already submitted:', error);
+                
+                // If we have a pending transaction that wasn't marked as submitted,
+                // it means we submitted but crashed before marking it
+                if (pendingTx && !pendingTx.submitted) {
+                    console.warn('Transaction was submitted but not marked. Clearing pending state.');
+                }
+                
                 // Clear the pending transaction as it's unrecoverable
                 localStorage.removeItem(pendingTxKey);
                 tokenStatus.pendingTransaction = false;
+                tokenStatus.lastError = 'Transaction already exists - cleared pending state';
             } else {
                 console.warn('Failed to submit to Unicity network, will retry next time:', error);
             }
