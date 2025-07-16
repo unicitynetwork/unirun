@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00029'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00030'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -60,6 +60,31 @@ function updateTokenStatusDisplay() {
         if (tokenStatus.lastError) {
             html += `<div class="status-line error">⚠️ ${tokenStatus.lastError}</div>`;
         }
+        
+        // Add chunk tokenization queue status
+        if (chunkTokenizationQueue.length > 0 || queueStatus.currentlyProcessing) {
+            html += '<div class="status-line" style="margin-top: 10px; border-top: 1px solid #555; padding-top: 5px;">Chunk Tokenization:</div>';
+            
+            if (queueStatus.currentlyProcessing) {
+                html += `<div class="status-line pending">Processing: ${queueStatus.currentlyProcessing}</div>`;
+            }
+            
+            if (chunkTokenizationQueue.length > 0) {
+                html += `<div class="status-line">Queue: ${chunkTokenizationQueue.length} chunks</div>`;
+            }
+            
+            if (queueStatus.totalProcessed > 0) {
+                html += `<div class="status-line success">Processed: ${queueStatus.totalProcessed}</div>`;
+            }
+            
+            if (queueStatus.totalFailed > 0) {
+                html += `<div class="status-line error">Failed: ${queueStatus.totalFailed}</div>`;
+            }
+            
+            if (queueStatus.lastError) {
+                html += `<div class="status-line error" style="font-size: 10px;">⚠️ ${queueStatus.lastError}</div>`;
+            }
+        }
     }
     
     statusContent.innerHTML = html;
@@ -68,8 +93,106 @@ function updateTokenStatusDisplay() {
 // Track all pending mint transactions
 const pendingMintTransactions = new Map(); // key: "x,z", value: mint data
 
+// Chunk tokenization queue
+const chunkTokenizationQueue = [];
+let isProcessingQueue = false;
+let queueProcessingPaused = false;
+
+// Queue status for monitoring
+const queueStatus = {
+    totalQueued: 0,
+    totalProcessed: 0,
+    totalFailed: 0,
+    currentlyProcessing: null,
+    lastProcessedTime: null,
+    lastError: null
+};
+
+// Process chunk tokenization queue
+async function processChunkTokenizationQueue() {
+    if (isProcessingQueue || queueProcessingPaused || chunkTokenizationQueue.length === 0) {
+        return;
+    }
+    
+    isProcessingQueue = true;
+    
+    while (chunkTokenizationQueue.length > 0 && !queueProcessingPaused) {
+        const task = chunkTokenizationQueue.shift();
+        const { chunkX, chunkZ, addedAt } = task;
+        
+        queueStatus.currentlyProcessing = `${chunkX},${chunkZ}`;
+        console.log(`Processing chunk tokenization for (${chunkX}, ${chunkZ}) - Queue size: ${chunkTokenizationQueue.length}`);
+        
+        try {
+            // Process the chunk tokenization
+            await tokenizeChunk(chunkX, chunkZ);
+            
+            queueStatus.totalProcessed++;
+            queueStatus.lastProcessedTime = Date.now();
+            console.log(`Successfully tokenized chunk (${chunkX}, ${chunkZ}) - Processed: ${queueStatus.totalProcessed}, Remaining: ${chunkTokenizationQueue.length}`);
+        } catch (error) {
+            queueStatus.totalFailed++;
+            queueStatus.lastError = `Chunk (${chunkX}, ${chunkZ}): ${error.message}`;
+            console.error(`Failed to tokenize chunk (${chunkX}, ${chunkZ}):`, error);
+            
+            // Optionally re-queue failed chunks with retry limit
+            if (task.retryCount === undefined) task.retryCount = 0;
+            if (task.retryCount < 3) {
+                task.retryCount++;
+                console.log(`Re-queuing chunk (${chunkX}, ${chunkZ}) for retry ${task.retryCount}/3`);
+                chunkTokenizationQueue.push(task);
+            }
+        }
+        
+        // Add a small delay between processing to avoid overwhelming the system
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    queueStatus.currentlyProcessing = null;
+    isProcessingQueue = false;
+    
+    console.log(`Queue processing complete. Total processed: ${queueStatus.totalProcessed}, Failed: ${queueStatus.totalFailed}`);
+}
+
+// Add chunk to tokenization queue
+function queueChunkTokenization(chunkX, chunkZ) {
+    const chunkKey = `${chunkX},${chunkZ}`;
+    
+    // Check if already in queue
+    const alreadyQueued = chunkTokenizationQueue.some(task => 
+        task.chunkX === chunkX && task.chunkZ === chunkZ
+    );
+    
+    if (alreadyQueued) {
+        console.log(`Chunk (${chunkX}, ${chunkZ}) already in tokenization queue`);
+        return;
+    }
+    
+    // Check if already being processed
+    if (chunksBeingTokenized.has(chunkKey)) {
+        console.log(`Chunk (${chunkX}, ${chunkZ}) already being tokenized`);
+        return;
+    }
+    
+    // Add to queue
+    chunkTokenizationQueue.push({
+        chunkX,
+        chunkZ,
+        addedAt: Date.now()
+    });
+    
+    queueStatus.totalQueued++;
+    console.log(`Added chunk (${chunkX}, ${chunkZ}) to tokenization queue - Queue size: ${chunkTokenizationQueue.length}`);
+    
+    // Start processing if not already running
+    processChunkTokenizationQueue();
+}
+
 // Save pending transactions before page unload
 window.addEventListener('beforeunload', () => {
+    // Pause queue processing
+    queueProcessingPaused = true;
+    
     if (pendingMintTransactions.size > 0) {
         console.log(`Saving ${pendingMintTransactions.size} pending mint transactions before unload...`);
         
@@ -85,6 +208,12 @@ window.addEventListener('beforeunload', () => {
             }
         });
     }
+    
+    // Save queue state
+    if (chunkTokenizationQueue.length > 0) {
+        console.log(`Saving ${chunkTokenizationQueue.length} queued chunks for later processing`);
+        localStorage.setItem('chunkTokenizationQueue', JSON.stringify(chunkTokenizationQueue));
+    }
 });
 
 // Initialize the game when DOM is loaded
@@ -97,6 +226,27 @@ async function initializeGame() {
     
     // Check for gamedev version change and clear chunk tokens if needed
     checkGamedevVersionAndClearChunks();
+    
+    // Restore chunk tokenization queue
+    const savedQueue = localStorage.getItem('chunkTokenizationQueue');
+    if (savedQueue) {
+        try {
+            const restoredTasks = JSON.parse(savedQueue);
+            console.log(`Restoring ${restoredTasks.length} queued chunk tokenization tasks`);
+            chunkTokenizationQueue.push(...restoredTasks);
+            queueStatus.totalQueued = restoredTasks.length;
+            localStorage.removeItem('chunkTokenizationQueue');
+            
+            // Start processing restored queue after a delay
+            setTimeout(() => {
+                console.log('Starting restored queue processing...');
+                processChunkTokenizationQueue();
+            }, 2000);
+        } catch (e) {
+            console.error('Failed to restore chunk tokenization queue:', e);
+            localStorage.removeItem('chunkTokenizationQueue');
+        }
+    }
     
     // Update status display periodically
     setInterval(updateTokenStatusDisplay, 1000);
@@ -369,7 +519,7 @@ function clearChunkTokenData(chunkX, chunkZ) {
 }
 
 // Create or recover chunk token
-async function ensureChunkToken(chunkX, chunkZ) {
+async function tokenizeChunk(chunkX, chunkZ) {
     const chunkKey = `${chunkX},${chunkZ}`;
     
     // Check if this chunk is already being tokenized (in-memory)
@@ -1786,17 +1936,10 @@ function setupNoaEngine() {
         const chunkX = Math.floor(x / chunkSize);
         const chunkZ = Math.floor(z / chunkSize);
         
-        // Ensure chunk token exists (create or recover)
-        try {
-            // Only tokenize chunks if we have a player's private key
-            if (localStorage.getItem('unicityRunner_privateKey')) {
-                await ensureChunkToken(chunkX, chunkZ);
-            } else {
-                // Skip chunk tokenization - no private key yet
-            }
-        } catch (error) {
-            console.error(`Failed to ensure chunk token for (${chunkX}, ${chunkZ}):`, error);
-            // Continue with chunk generation even if tokenization fails
+        // Queue chunk for tokenization (non-blocking)
+        if (localStorage.getItem('unicityRunner_privateKey')) {
+            // Add to queue for async processing
+            queueChunkTokenization(chunkX, chunkZ);
         }
         
         // Generate level structure for this chunk
