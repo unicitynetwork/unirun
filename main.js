@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00031'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00034'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -25,6 +25,8 @@ let corridorWestID;
 let droneEntity = null;
 let projectiles = [];
 let currentPlayerHealth = 100; // Track current health during gameplay
+let coins = new Map(); // Track all coins in the world: key = "x,y,z", value = entity
+let playerCoins = 0; // Player's coin balance
 
 // Token status tracking
 let tokenStatus = {
@@ -37,6 +39,14 @@ let tokenStatus = {
 };
 
 // No custom meshes needed - noa only supports full block collision
+
+// Update coin display
+function updateCoinDisplay() {
+    const coinDisplay = document.getElementById('coinDisplay');
+    if (coinDisplay) {
+        coinDisplay.textContent = `Coins: ${playerCoins}`;
+    }
+}
 
 // Update token status display
 function updateTokenStatusDisplay() {
@@ -351,7 +361,8 @@ function calculateInitialSpawnPoint(seed) {
     const rng = seededRandom(seed + '_spawn');
     // Generate level pattern for chunk 0,0
     const chunkSize = 32;
-    const level = generateLevelForChunk(0, 0, seed);
+    const levelData = generateLevelForChunk(0, 0, seed);
+    const level = levelData.tiles;
     
     // Find the first open space near the center
     const centerX = Math.floor(chunkSize / 2);
@@ -1471,8 +1482,48 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
         }
     }
     
+    // Generate coins in blue (north) corridors
+    const coinPositions = [];
+    const rng = seededRandom(`${seed}_coins_${chunkX}_${chunkZ}`);
     
-    return tiles;
+    // Check each row in the chunk for north corridors
+    for (let z = 0; z < chunkSize; z++) {
+        // Check if this row has a continuous north corridor
+        let hasNorthCorridor = true;
+        for (let x = 14; x <= 16; x++) {
+            if (tiles[x][z] !== 'corridor_north') {
+                hasNorthCorridor = false;
+                break;
+            }
+        }
+        
+        if (hasNorthCorridor && z >= 5 && z < chunkSize - 5) {
+            // Decide if this row should have coins (50% chance)
+            if (rng() < 0.5) {
+                // Determine coin cluster length (1-10)
+                const clusterLength = Math.floor(rng() * 10) + 1;
+                
+                // Determine lane position (0=left, 1=center, 2=right)
+                const lane = Math.floor(rng() * 3);
+                const xPos = 14 + lane; // 14=left, 15=center, 16=right
+                
+                // Place coins
+                for (let i = 0; i < clusterLength && z + i < chunkSize - 5; i++) {
+                    // Verify the corridor continues
+                    if (tiles[xPos][z + i] === 'corridor_north') {
+                        coinPositions.push({ x: xPos, z: z + i });
+                    } else {
+                        break; // Stop if corridor ends
+                    }
+                }
+                
+                // Skip ahead to avoid overlapping clusters
+                z += clusterLength + 2;
+            }
+        }
+    }
+    
+    return { tiles, coinPositions };
 }
 
 
@@ -2000,7 +2051,9 @@ function setupNoaEngine() {
         }
         
         // Generate level structure for this chunk
-        const level = generateLevelForChunk(chunkX, chunkZ, WORLD_SEED);
+        const levelData = generateLevelForChunk(chunkX, chunkZ, WORLD_SEED);
+        const level = levelData.tiles;
+        const coinPositions = levelData.coinPositions;
         
         // Fill the chunk
         for (var i = 0; i < chunkSize; i++) {
@@ -2326,10 +2379,136 @@ function setupNoaEngine() {
             });
         }
         
+        // Create coin entities for this chunk
+        coinPositions.forEach(coinPos => {
+            const worldX = x + coinPos.x;
+            const worldZ = z + coinPos.z;
+            const worldY = 4; // Coins float at y=4 in north corridors (which are at y=3)
+            
+            const coinKey = `${worldX},${worldY},${worldZ}`;
+            
+            // Check if coin already exists at this position
+            if (!coins.has(coinKey)) {
+                // Create coin entity using proper components
+                const coinEntity = noa.entities.add([worldX + 0.5, worldY, worldZ + 0.5]);
+                
+                // Add mesh component
+                const clonedMesh = coinMesh.clone('coin_' + coinKey);
+                clonedMesh.setEnabled(true);
+                noa.entities.addComponent(coinEntity, noa.entities.names.mesh, {
+                    mesh: clonedMesh,
+                    offset: [0, 0, 0]
+                });
+                
+                // Make it non-solid
+                noa.entities.addComponent(coinEntity, noa.entities.names.collideTerrain, false);
+                noa.entities.addComponent(coinEntity, noa.entities.names.collideEntities, false);
+                
+                // Add custom coin component for tracking
+                noa.entities.addComponent(coinEntity, 'isCoin', {
+                    position: [worldX, worldY, worldZ],
+                    collected: false,
+                    value: 1
+                });
+                
+                // Track coin
+                coins.set(coinKey, coinEntity);
+            }
+        });
+        
         // tell noa the chunk's terrain data is now set
         noa.world.setChunkData(id, data);
     });
     
+    
+    // Register coin component
+    noa.ents.createComponent({
+        name: 'isCoin',
+        state: {
+            position: null,
+            collected: false,
+            value: 1
+        }
+    });
+    
+    // Create coin mesh
+    const coinMesh = BABYLON.MeshBuilder.CreateCylinder('coin', {
+        diameter: 0.5,
+        height: 0.1,
+        tessellation: 16
+    }, noa.rendering.getScene());
+    
+    // Golden coin material
+    const coinMaterial = new BABYLON.StandardMaterial('coinMaterial', noa.rendering.getScene());
+    coinMaterial.diffuseColor = new BABYLON.Color3(1, 0.84, 0); // Gold color
+    coinMaterial.specularColor = new BABYLON.Color3(1, 1, 1);
+    coinMaterial.emissiveColor = new BABYLON.Color3(0.3, 0.25, 0);
+    coinMesh.material = coinMaterial;
+    
+    // Hide the original mesh
+    coinMesh.setEnabled(false);
+    
+    // Coin collection check
+    setInterval(() => {
+        if (!noa || !noa.playerEntity) return;
+        
+        const playerPos = noa.entities.getPosition(noa.playerEntity);
+        const playerX = Math.floor(playerPos[0]);
+        const playerY = Math.floor(playerPos[1]);
+        const playerZ = Math.floor(playerPos[2]);
+        
+        // Check nearby positions for coins
+        for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 2; dy++) {
+                for (let dz = -1; dz <= 1; dz++) {
+                    const checkX = playerX + dx;
+                    const checkY = playerY + dy;
+                    const checkZ = playerZ + dz;
+                    const coinKey = `${checkX},${checkY},${checkZ}`;
+                    
+                    if (coins.has(coinKey)) {
+                        const coinEntity = coins.get(coinKey);
+                        const coinData = noa.entities.getState(coinEntity, 'isCoin');
+                        
+                        if (!coinData.collected) {
+                            // Mark as collected
+                            coinData.collected = true;
+                            
+                            // Add to player balance
+                            playerCoins += coinData.value;
+                            console.log(`Collected coin! Total coins: ${playerCoins}`);
+                            
+                            // Remove coin entity
+                            noa.ents.deleteEntity(coinEntity);
+                            coins.delete(coinKey);
+                            
+                            // TODO: Mint coin to player inventory
+                            console.log('TODO: Mint coin to player inventory');
+                            
+                            // Update display (if we have one)
+                            updateCoinDisplay();
+                        }
+                    }
+                }
+            }
+        }
+    }, 100); // Check every 100ms
+    
+    // Rotate coins
+    noa.on('tick', function() {
+        coins.forEach((entity, key) => {
+            // Check if entity still exists
+            if (noa.entities.hasComponent(entity, noa.entities.names.mesh)) {
+                const meshData = noa.entities.getMeshData(entity);
+                if (meshData && meshData.mesh) {
+                    meshData.mesh.rotation.y += 0.05; // Spin the coin
+                }
+            } else {
+                // Remove from tracking if entity no longer exists
+                coins.delete(key);
+            }
+        });
+    });
     
     // Force chunk generation periodically
     setInterval(() => {
