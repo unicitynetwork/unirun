@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00034'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00035'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -172,7 +172,6 @@ async function processChunkTokenizationQueue() {
 async function processChunkTask(task) {
     const { chunkX, chunkZ } = task;
     
-    console.log(`Processing chunk tokenization for (${chunkX}, ${chunkZ}) - Active: ${activeTasks.size}/${MAX_CONCURRENT_TASKS}, Queue: ${chunkTokenizationQueue.length}`);
     
     try {
         // Process the chunk tokenization
@@ -180,7 +179,6 @@ async function processChunkTask(task) {
         
         queueStatus.totalProcessed++;
         queueStatus.lastProcessedTime = Date.now();
-        console.log(`Successfully tokenized chunk (${chunkX}, ${chunkZ}) - Total processed: ${queueStatus.totalProcessed}`);
     } catch (error) {
         queueStatus.totalFailed++;
         queueStatus.lastError = `Chunk (${chunkX}, ${chunkZ}): ${error.message}`;
@@ -190,7 +188,6 @@ async function processChunkTask(task) {
         if (task.retryCount === undefined) task.retryCount = 0;
         if (task.retryCount < 3) {
             task.retryCount++;
-            console.log(`Re-queuing chunk (${chunkX}, ${chunkZ}) for retry ${task.retryCount}/3`);
             
             // Add back to queue with a delay
             setTimeout(() => {
@@ -213,13 +210,11 @@ function queueChunkTokenization(chunkX, chunkZ) {
     );
     
     if (alreadyQueued) {
-        console.log(`Chunk (${chunkX}, ${chunkZ}) already in tokenization queue`);
         return;
     }
     
     // Check if already being processed
     if (chunksBeingTokenized.has(chunkKey)) {
-        console.log(`Chunk (${chunkX}, ${chunkZ}) already being tokenized`);
         return;
     }
     
@@ -231,7 +226,6 @@ function queueChunkTokenization(chunkX, chunkZ) {
     });
     
     queueStatus.totalQueued++;
-    console.log(`Added chunk (${chunkX}, ${chunkZ}) to tokenization queue - Queue size: ${chunkTokenizationQueue.length}`);
     
     // Start processing if not already running
     processChunkTokenizationQueue();
@@ -244,11 +238,9 @@ window.addEventListener('beforeunload', () => {
     
     // Log active tasks
     if (activeTasks.size > 0) {
-        console.log(`WARNING: ${activeTasks.size} chunk tokenization tasks still active during unload`);
     }
     
     if (pendingMintTransactions.size > 0) {
-        console.log(`Saving ${pendingMintTransactions.size} pending mint transactions before unload...`);
         
         // Force save all pending mint transactions
         pendingMintTransactions.forEach((mintData, chunkKey) => {
@@ -256,7 +248,6 @@ window.addEventListener('beforeunload', () => {
             const mintTxKey = getChunkStorageKey(x, z, 'mintTx');
             try {
                 localStorage.setItem(mintTxKey, JSON.stringify(mintData));
-                console.log(`Emergency save of mint transaction for chunk (${x}, ${z})`);
             } catch (e) {
                 console.error(`Failed to save mint transaction for chunk (${x}, ${z}):`, e);
             }
@@ -278,7 +269,6 @@ window.addEventListener('beforeunload', () => {
     });
     
     if (tasksToSave.length > 0) {
-        console.log(`Saving ${tasksToSave.length} chunks (${chunkTokenizationQueue.length} queued + ${activeTasks.size} active) for later processing`);
         localStorage.setItem('chunkTokenizationQueue', JSON.stringify(tasksToSave));
     }
 });
@@ -289,7 +279,6 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 async function initializeGame() {
-    console.log('Initializing Unicity Runner...');
     
     // Check for gamedev version change and clear chunk tokens if needed
     checkGamedevVersionAndClearChunks();
@@ -299,14 +288,12 @@ async function initializeGame() {
     if (savedQueue) {
         try {
             const restoredTasks = JSON.parse(savedQueue);
-            console.log(`Restoring ${restoredTasks.length} queued chunk tokenization tasks`);
             chunkTokenizationQueue.push(...restoredTasks);
             queueStatus.totalQueued = restoredTasks.length;
             localStorage.removeItem('chunkTokenizationQueue');
             
             // Start processing restored queue after a delay
             setTimeout(() => {
-                console.log('Starting restored queue processing...');
                 processChunkTokenizationQueue();
             }, 2000);
         } catch (e) {
@@ -592,7 +579,6 @@ async function tokenizeChunk(chunkX, chunkZ) {
     
     // Check if this chunk is already being tokenized (in-memory)
     if (chunksBeingTokenized.has(chunkKey)) {
-        console.log(`Chunk (${chunkX}, ${chunkZ}) is already being tokenized, waiting...`);
         return await chunksBeingTokenized.get(chunkKey);
     }
     
@@ -603,7 +589,6 @@ async function tokenizeChunk(chunkX, chunkZ) {
     
     if (existingPending) {
         const pending = JSON.parse(existingPending);
-        console.log(`Chunk (${chunkX}, ${chunkZ}) has a pending token (age: ${Math.floor((Date.now() - pending.timestamp) / 1000)}s)`);
         
         // Check if we have a mint transaction for this chunk
         const mintTxKey = getChunkStorageKey(chunkX, chunkZ, 'mintTx');
@@ -613,12 +598,10 @@ async function tokenizeChunk(chunkX, chunkZ) {
             const mintData = JSON.parse(savedMintTx);
             // Check gamedev version
             if (mintData.chunkState && mintData.chunkState.gamedevVersion !== GAMEDEV_VERSION) {
-                console.log(`Pending token for chunk (${chunkX}, ${chunkZ}) is from old version, clearing...`);
                 localStorage.removeItem(pendingKey);
                 localStorage.removeItem(mintTxKey);
                 // Continue with normal flow
             } else if (mintData.submitted) {
-                console.log(`Chunk (${chunkX}, ${chunkZ}) already submitted, attempting recovery...`);
                 // Create a promise that attempts to complete the minting
                 const recoveryPromise = createNewChunkToken(chunkX, chunkZ).catch(error => {
                     console.error(`Recovery failed for chunk (${chunkX}, ${chunkZ}):`, error);
@@ -630,7 +613,6 @@ async function tokenizeChunk(chunkX, chunkZ) {
         }
         
         // If we have pending but no mint transaction, clear it and continue
-        console.log(`Chunk (${chunkX}, ${chunkZ}) has stale pending state, clearing...`);
         localStorage.removeItem(pendingKey);
     }
     
@@ -670,7 +652,6 @@ async function tokenizeChunk(chunkX, chunkZ) {
             const mintTxKey = getChunkStorageKey(chunkX, chunkZ, 'mintTx');
             const savedMintTx = localStorage.getItem(mintTxKey);
             if (savedMintTx) {
-                console.log(`Found unfinished mint transaction for chunk (${chunkX}, ${chunkZ}), attempting to complete...`);
             }
             
             // Create new token from scratch (or recover from saved mint tx)
@@ -693,7 +674,6 @@ async function tokenizeChunk(chunkX, chunkZ) {
 
 // Create a new chunk token
 async function createNewChunkToken(chunkX, chunkZ) {
-    console.log(`Starting chunk tokenization for (${chunkX}, ${chunkZ})...`);
     
     // Get pending key once at the beginning
     const pendingKey = getChunkStorageKey(chunkX, chunkZ, 'pending');
@@ -711,14 +691,12 @@ async function createNewChunkToken(chunkX, chunkZ) {
             
             // Check if this mint transaction is for the current gamedev version
             if (savedData.chunkState && savedData.chunkState.gamedevVersion !== GAMEDEV_VERSION) {
-                console.log(`Mint transaction for chunk (${chunkX}, ${chunkZ}) is from version ${savedData.chunkState.gamedevVersion}, ignoring...`);
                 // Remove the old mint transaction
                 localStorage.removeItem(mintTxKey);
                 // Proceed to create new token
             } else {
                 shouldCreateNew = false;
                 // Recover from saved mint transaction
-                console.log(`Recovering saved mint transaction for chunk (${chunkX}, ${chunkZ})...`);
                 
                 tokenId = window.UnicitySDK.TokenId.create(
                     window.UnicitySDK.HexConverter.decode(savedData.tokenId)
@@ -835,7 +813,6 @@ async function createNewChunkToken(chunkX, chunkZ) {
             
             // Save to localStorage immediately
             localStorage.setItem(mintTxKey, JSON.stringify(mintTxToSave));
-            console.log(`Saved mint transaction data for chunk (${chunkX}, ${chunkZ})`);
         }
         
         // Submit to Unicity network
@@ -849,7 +826,6 @@ async function createNewChunkToken(chunkX, chunkZ) {
         
         // Check if we already have a request ID (meaning it was already submitted)
         if (savedData.submitted && savedData.requestId) {
-            console.log(`Chunk (${chunkX}, ${chunkZ}) was already submitted with request ID: ${savedData.requestId}`);
             // We need to recreate the commitment to poll for inclusion proof
             // Since we can't override the request ID, we'll create it normally
             const signingService = await window.UnicitySDK.SigningService.createFromSecret(
@@ -868,12 +844,9 @@ async function createNewChunkToken(chunkX, chunkZ) {
             }
         } else {
             // First time submission
-            console.log(`Submitting mint transaction for chunk (${chunkX}, ${chunkZ})...`);
-            console.log('Chunk Token ID:', window.UnicitySDK.HexConverter.encode(tokenId.bytes));
             
             try {
                 commitment = await client.submitMintTransaction(mintData);
-                console.log(`Mint commitment received for chunk (${chunkX}, ${chunkZ}):`, commitment.requestId.toString());
                 
                 // Update saved data with submission info
                 savedData.submitted = true;
@@ -888,12 +861,10 @@ async function createNewChunkToken(chunkX, chunkZ) {
                 
                 // Check if it's a REQUEST_ID_EXISTS error
                 if (submitError.message && submitError.message.includes('REQUEST_ID_EXISTS')) {
-                    console.log(`Chunk (${chunkX}, ${chunkZ}) - Transaction already exists, will poll for inclusion proof`);
                     
                     // Check if another process already saved this token
                     const existingToken = loadChunkTokenData(chunkX, chunkZ);
                     if (existingToken.token && existingToken.state && existingToken.state.gamedevVersion === GAMEDEV_VERSION) {
-                        console.log(`Chunk (${chunkX}, ${chunkZ}) - Token was already created by another process`);
                         // Clear pending state and mint transaction
                         localStorage.removeItem(pendingKey);
                         localStorage.removeItem(mintTxKey);
@@ -956,7 +927,6 @@ async function createNewChunkToken(chunkX, chunkZ) {
             } catch (error) {
                 if (error.message && error.message.includes('Invalid inclusion proof hash algorithm') && retryCount < maxRetries - 1) {
                     retryCount++;
-                    console.log(`Chunk (${chunkX}, ${chunkZ}) - Invalid hash algorithm error, retrying (${retryCount}/${maxRetries})...`);
                     
                     // Wait a bit before retry
                     await new Promise(resolve => setTimeout(resolve, 1000));
@@ -1000,7 +970,6 @@ async function createNewChunkToken(chunkX, chunkZ) {
         const chunkKey = `${chunkX},${chunkZ}`;
         pendingMintTransactions.delete(chunkKey);
         
-        console.log(`Successfully created chunk token for (${chunkX}, ${chunkZ})`);
         return chunkToken;
         
     } catch (error) {
@@ -1009,7 +978,6 @@ async function createNewChunkToken(chunkX, chunkZ) {
         
         // Check for REQUEST_ID_EXISTS error
         if (error.message && error.message.includes('REQUEST_ID_EXISTS')) {
-            console.log(`Chunk (${chunkX}, ${chunkZ}) - Transaction already submitted. Will check inclusion proof on next attempt.`);
             // Keep the mint transaction data for recovery
             // Don't throw the error since this is recoverable
             return null;
@@ -1038,7 +1006,6 @@ function checkGamedevVersionAndClearChunks() {
     const savedVersion = localStorage.getItem(GAMEDEV_VERSION_KEY);
     
     if (savedVersion && savedVersion !== GAMEDEV_VERSION) {
-        console.log(`Gamedev version changed from ${savedVersion} to ${GAMEDEV_VERSION}. Clearing all chunk tokens...`);
         
         // Clear all chunk tokens and mint transactions
         const keysToRemove = [];
@@ -1049,10 +1016,8 @@ function checkGamedevVersionAndClearChunks() {
             }
         }
         
-        console.log(`Removing ${keysToRemove.length} chunk token entries...`);
         keysToRemove.forEach(key => localStorage.removeItem(key));
         
-        console.log('Chunk tokens cleared due to version change');
     }
     
     // Save current version
@@ -1061,7 +1026,6 @@ function checkGamedevVersionAndClearChunks() {
 
 // Function to manually clear stale pending chunk tokens
 window.clearStalePendingChunks = function(maxAgeMinutes = 10) {
-    console.log(`Clearing pending chunk tokens older than ${maxAgeMinutes} minutes...`);
     const maxAge = maxAgeMinutes * 60 * 1000;
     let clearedCount = 0;
     
@@ -1081,7 +1045,6 @@ window.clearStalePendingChunks = function(maxAgeMinutes = 10) {
                 if (Date.now() - pending.timestamp > maxAge) {
                     localStorage.removeItem(key);
                     clearedCount++;
-                    console.log(`Cleared stale pending token: ${key}`);
                 }
             }
         } catch (e) {
@@ -1089,13 +1052,11 @@ window.clearStalePendingChunks = function(maxAgeMinutes = 10) {
         }
     });
     
-    console.log(`Cleared ${clearedCount} stale pending chunk tokens`);
     return clearedCount;
 };
 
 // Function to manually clear saved mint transactions
 window.clearSavedMintTransactions = function() {
-    console.log('Clearing all saved mint transactions...');
     let clearedCount = 0;
     
     const keysToCheck = [];
@@ -1109,16 +1070,13 @@ window.clearSavedMintTransactions = function() {
     keysToCheck.forEach(key => {
         localStorage.removeItem(key);
         clearedCount++;
-        console.log(`Cleared mint transaction: ${key}`);
     });
     
-    console.log(`Cleared ${clearedCount} saved mint transactions`);
     return clearedCount;
 };
 
 // Function to manually retry chunk tokenization
 window.retryChunkTokenization = async function(chunkX, chunkZ) {
-    console.log(`Manually retrying tokenization for chunk (${chunkX}, ${chunkZ})...`);
     
     // Clear any pending state
     const pendingKey = getChunkStorageKey(chunkX, chunkZ, 'pending');
@@ -1130,7 +1088,6 @@ window.retryChunkTokenization = async function(chunkX, chunkZ) {
     
     try {
         const result = await ensureChunkToken(chunkX, chunkZ);
-        console.log(`Retry completed for chunk (${chunkX}, ${chunkZ})`);
         return result;
     } catch (error) {
         console.error(`Retry failed for chunk (${chunkX}, ${chunkZ}):`, error);
@@ -1144,24 +1101,12 @@ window.inspectMintTransaction = function(chunkX, chunkZ) {
     const savedData = localStorage.getItem(mintTxKey);
     
     if (!savedData) {
-        console.log(`No saved mint transaction for chunk (${chunkX}, ${chunkZ})`);
         return null;
     }
     
     const parsed = JSON.parse(savedData);
-    console.log(`Mint transaction for chunk (${chunkX}, ${chunkZ}):`, parsed);
     
     // Decode hex values for inspection
-    console.log('Decoded values:');
-    console.log('- Token ID:', parsed.tokenId);
-    console.log('- Token Type:', parsed.tokenType);
-    console.log('- Recipient:', parsed.recipient);
-    console.log('- Salt length:', parsed.salt ? parsed.salt.length / 2 : 0, 'bytes');
-    console.log('- Nonce length:', parsed.nonce ? parsed.nonce.length / 2 : 0, 'bytes');
-    console.log('- Submitted:', parsed.submitted);
-    console.log('- Request ID:', parsed.requestId);
-    console.log('- Timestamp:', new Date(parsed.timestamp).toLocaleString());
-    console.log('- Age:', Math.floor((Date.now() - parsed.timestamp) / 1000), 'seconds');
     
     return parsed;
 };
@@ -1250,32 +1195,19 @@ window.debugChunkTokens = function() {
     });
     
     // Display results
-    console.log('=== Chunk Token Statistics ===');
-    console.log(`Total chunks tracked: ${stats.total}`);
-    console.log(`Fully minted: ${stats.minted}`);
-    console.log(`Pending (submitted): ${stats.pending}`);
-    console.log(`In progress: ${stats.inProgress}`);
-    console.log(`Failed/Unknown: ${stats.failed}`);
     
     if (stats.chunks.minted.length > 0) {
-        console.log('\nMinted chunks:', stats.chunks.minted.join(', '));
     }
     
     if (stats.chunks.pending.length > 0) {
-        console.log('\nPending chunks (submitted but not completed):');
-        stats.chunks.pending.forEach(chunk => console.log(`  ${chunk}`));
     }
     
     if (stats.chunks.inProgress.length > 0) {
-        console.log('\nIn-progress chunks:');
-        stats.chunks.inProgress.forEach(chunk => console.log(`  ${chunk}`));
     }
     
     if (stats.chunks.failed.length > 0) {
-        console.log('\nFailed chunks:', stats.chunks.failed.join(', '));
     }
     
-    console.log('\nUse debugChunkTokens() to refresh this information');
     
     return stats;
 };
@@ -1540,7 +1472,6 @@ async function initializePlayerToken() {
                 const stateBytes = window.UnicitySDK.HexConverter.decode(tokenData.state.data);
                 const stateData = JSON.parse(new TextDecoder().decode(stateBytes));
                 if (stateData.position && stateData.position[1] < -100) {
-                    console.log('Clearing saved token with invalid position');
                     localStorage.removeItem('unicityRunner_playerToken');
                     localStorage.removeItem('unicityRunner_privateKey');
                     await createNewPlayerToken();
@@ -1588,9 +1519,6 @@ async function initializePlayerToken() {
         const nonce = playerToken.state.unlockPredicate.nonce;
         signingService = await window.UnicitySDK.SigningService.createFromSecret(privateKeyBytes, nonce);
         
-        console.log("Existing player token imported.", playerToken);
-        console.log("Token state:", playerToken.state);
-        console.log("Unlock predicate:", playerToken.state?.unlockPredicate);
         
         // Initialize status counters from token history
         tokenStatus.initialized = true;
@@ -1673,25 +1601,16 @@ async function createNewPlayerToken() {
     
     try {
         // Submit mint transaction to Unicity network
-        console.log('Submitting mint transaction to Unicity network...');
-        console.log('Token ID:', window.UnicitySDK.HexConverter.encode(tokenId.bytes));
-        console.log('Token Type:', Array.from(tokenType.bytes));
-        console.log('Recipient:', recipient.toString());
-        console.log('Data Hash:', dataHash.toString());
         
         const mintCommitment = await client.submitMintTransaction(mintTransactionData);
-        console.log('Mint commitment received:', mintCommitment);
-        console.log('Request ID:', mintCommitment.requestId.toString());
         
         // Wait for inclusion proof using SDK utility
-        console.log('Waiting for inclusion proof...');
         const inclusionProof = await window.UnicitySDK.waitInclusionProof(
             client,
             mintCommitment,
             AbortSignal.timeout(30000), // 30 second timeout
             1000 // Check every second
         );
-        console.log('Inclusion proof received and verified');
         
         // Create the transaction with inclusion proof
         const mintTransaction = await client.createTransaction(mintCommitment, inclusionProof);
@@ -1713,7 +1632,6 @@ async function createNewPlayerToken() {
         const tokenJson = playerToken.toJSON();
         localStorage.setItem('unicityRunner_playerToken', JSON.stringify(tokenJson));
         
-        console.log('Player token minted successfully on Unicity network!', playerToken);
         
         tokenStatus.initialized = true;
         tokenStatus.totalSubmissions = 1;
@@ -1787,18 +1705,15 @@ function updateHealthDisplay(health, maxHealth = 100) {
 function damagePlayer(amount) {
     // Don't damage if already dead
     if (currentPlayerHealth <= 0) {
-        console.log('Player already dead, health:', currentPlayerHealth);
         return;
     }
     
     currentPlayerHealth = Math.max(0, currentPlayerHealth - amount);
     updateHealthDisplay(currentPlayerHealth);
     
-    console.log('Player damaged:', amount, 'New health:', currentPlayerHealth);
     
     // Check for death
     if (currentPlayerHealth <= 0) {
-        console.log('Player health reached 0, calling handlePlayerDeath()');
         handlePlayerDeath();
     }
 }
@@ -1808,7 +1723,6 @@ function healPlayer(amount) {
     currentPlayerHealth = Math.min(100, currentPlayerHealth + amount);
     updateHealthDisplay(currentPlayerHealth);
     
-    console.log('Player healed:', amount, 'New health:', currentPlayerHealth);
 }
 
 
@@ -1833,13 +1747,6 @@ function setupNoaEngine() {
     noa = new Engine(opts);
     
     // Log default camera parameters
-    console.log('Default camera parameters:', {
-        zoomDistance: noa.camera.zoomDistance,
-        pitch: noa.camera.pitch,
-        heading: noa.camera.heading,
-        currentZoom: noa.camera.currentZoom,
-        cameraTarget: noa.camera.cameraTarget
-    });
     
     // Set up 3rd person camera - looking from behind and above
     noa.camera.zoomDistance = 20;  // Doubled distance for better view
@@ -1855,10 +1762,6 @@ function setupNoaEngine() {
     // Also ensure immediate zoom updates (no smoothing)
     noa.camera.zoomSpeed = 1.0;  // Instant zoom changes
     
-    console.log('Updated camera parameters:', {
-        zoomDistance: noa.camera.zoomDistance,
-        pitch: noa.camera.pitch
-    });
     
     // Register materials - using simple colors
     var brownish = [0.45, 0.36, 0.22];
@@ -1894,10 +1797,8 @@ function setupNoaEngine() {
     
     // Function to find a valid spawn position in a room
     function findSpawnRoom(seed) {
-        console.log('findSpawnRoom called with seed:', seed);
         
         // First check if chunk 0,0 has a room
-        console.log(`Chunk 0,0 has room: ${roomExists(0, 0, seed)}`);
         
         // Search in a spiral pattern from origin
         for (let radius = 0; radius < 10; radius++) {
@@ -1907,15 +1808,11 @@ function setupNoaEngine() {
                     if (Math.abs(x) === radius || Math.abs(z) === radius) {
                         const hasRoom = roomExists(x, z, seed);
                         if (hasRoom) {
-                            console.log(`Checking chunk (${x}, ${z}): has room = ${hasRoom}`);
                             // Get room center in local chunk coordinates
                             const localPos = getRoomCenter(x, z, seed);
                             // Convert to world coordinates
                             const worldX = x * 32 + localPos[0];
                             const worldZ = z * 32 + localPos[2];
-                            console.log(`Found spawn room at chunk (${x}, ${z})`);
-                            console.log(`  Local pos: ${localPos}`);
-                            console.log(`  World pos: [${worldX}, 1, ${worldZ}]`);
                             return [worldX, 1, worldZ];
                         }
                     }
@@ -1923,25 +1820,20 @@ function setupNoaEngine() {
             }
         }
         // Fallback to origin
-        console.log('No room found in 10 chunk radius! Using fallback position');
         return [8, 1, 8];
     }
     
     // Set player position from token
     const playerState = getPlayerState();
-    console.log('Player state from token:', playerState);
     let position = playerState?.position || null;
-    console.log('Position from state:', position);
     
     // Initialize health display
     if (playerState && playerState.health !== undefined) {
         currentPlayerHealth = playerState.health;
         updateHealthDisplay(currentPlayerHealth);
-        console.log('Loaded player health from state:', currentPlayerHealth);
         
         // If player died in previous session, respawn them
         if (currentPlayerHealth <= 0) {
-            console.log('Player loaded with 0 health, triggering respawn');
             currentPlayerHealth = 100; // Reset health temporarily so handlePlayerDeath works
             setTimeout(() => handlePlayerDeath(), 100); // Delay to ensure engine is ready
         }
@@ -1953,18 +1845,14 @@ function setupNoaEngine() {
     // If no saved position or invalid position, we need to find a spawn room
     // But we'll do this after chunks are generated
     if (!position || position[1] < -10) {
-        console.log('Need to find spawn room, using temporary position...');
-        console.log('Current position:', position);
         position = [16, 50, 16]; // High up to prevent getting stuck
         
         // After chunks generate, find proper spawn
         setTimeout(() => {
-            console.log('Timeout triggered - starting spawn search...');
             // Force chunk generation around origin first
             forceChunkGeneration();
             
             setTimeout(() => {
-                console.log('Finding spawn room...');
                 const spawnPos = calculateInitialSpawnPoint(WORLD_SEED);
                 noa.entities.setPosition(noa.playerEntity, spawnPos);
                 
@@ -1975,16 +1863,11 @@ function setupNoaEngine() {
                         Math.floor(spawnPos[1] - 1), 
                         Math.floor(spawnPos[2])
                     );
-                    console.log(`Spawn position: ${spawnPos}`);
-                    console.log(`Block below spawn: ${blockBelow} (roomFloorID=${roomFloorID})`);
-                    console.log(`Chunk: ${Math.floor(spawnPos[0]/32)}, ${Math.floor(spawnPos[2]/32)}`);
                     
                     // If still not in a room, try to find the actual room center
                     if (blockBelow !== roomFloorID) {
-                        console.log('Not in room! Checking actual generation...');
                         const chunkX = Math.floor(spawnPos[0] / 32);
                         const chunkZ = Math.floor(spawnPos[2] / 32);
-                        console.log(`Room should exist at chunk ${chunkX},${chunkZ}: ${roomExists(chunkX, chunkZ, WORLD_SEED)}`);
                     }
                     
                     // Create hostile drone entity near player after spawn is finalized
@@ -2023,14 +1906,12 @@ function setupNoaEngine() {
         offset: [0, 0.9, 0] // Offset to center the cylinder on the player
     });
     
-    console.log('Added red cylinder mesh to player');
     
     // Increase the player's movement speed 2x
     const playerMovement = noa.entities.getMovement(noa.playerEntity);
     if (playerMovement) {
         playerMovement.maxSpeed *= 2; // 2x the max speed
         playerMovement.moveSpeed *= 2; // 2x the move speed
-        console.log('Player movement speed increased 2x');
     }
     
     // Drone will be created after player spawn is finalized
@@ -2380,6 +2261,8 @@ function setupNoaEngine() {
         }
         
         // Create coin entities for this chunk
+        // TODO: Temporarily disabled coin placement
+        /*
         coinPositions.forEach(coinPos => {
             const worldX = x + coinPos.x;
             const worldZ = z + coinPos.z;
@@ -2415,6 +2298,7 @@ function setupNoaEngine() {
                 coins.set(coinKey, coinEntity);
             }
         });
+        */
         
         // tell noa the chunk's terrain data is now set
         noa.world.setChunkData(id, data);
@@ -2476,14 +2360,12 @@ function setupNoaEngine() {
                             
                             // Add to player balance
                             playerCoins += coinData.value;
-                            console.log(`Collected coin! Total coins: ${playerCoins}`);
                             
                             // Remove coin entity
                             noa.ents.deleteEntity(coinEntity);
                             coins.delete(coinKey);
                             
                             // TODO: Mint coin to player inventory
-                            console.log('TODO: Mint coin to player inventory');
                             
                             // Update display (if we have one)
                             updateCoinDisplay();
@@ -2747,7 +2629,7 @@ function setupNoaEngine() {
                 
                 // Log strafe status occasionally
                 if (Math.random() < 0.05) {  // 5% chance, about once per second
-                    console.log('Auto-strafing:', facingDir, 'to', targetExit);
+                    
                 }
             }
         } else {
@@ -2798,7 +2680,6 @@ function setupNoaEngine() {
             noa._isTurning = false;
             noa._targetExit = null;
             noa._targetDir = null;
-            console.log('Turn cancelled - entered corridor');
             return;
         }
         
@@ -2821,7 +2702,6 @@ function setupNoaEngine() {
             movement.heading = targetHeading;
             noa.camera.heading = targetHeading;
             noa._isTurning = false;
-            console.log('Turn complete');
         } else {
             // Rotate towards target
             const rotationStep = diff > 0 ? turnSpeed : -turnSpeed;
@@ -2887,12 +2767,6 @@ function setupNoaEngine() {
                 const currentHeading = movement.heading;
                 
                 // Debug log room info
-                console.log('Room analysis:', {
-                    playerPos: [Math.floor(pos[0]), Math.floor(pos[2])],
-                    exits: Object.keys(roomInfo.exits).filter(dir => roomInfo.exits[dir] !== null),
-                    currentHeading: currentHeading.toFixed(2),
-                    input: noa.inputs.state.left ? 'left' : 'right'
-                });
                 
                 // Determine which direction player is currently facing
                 // Normalize heading to 0-2π range
@@ -2974,8 +2848,6 @@ function setupNoaEngine() {
                 }
                 // Never face south!
                 
-                console.log('Turning:', currentDir, '->', targetDir, 'heading:', targetHeading.toFixed(2));
-                console.log('Available exits:', Object.keys(roomInfo.exits).filter(dir => roomInfo.exits[dir] !== null));
                 
                 // Store target heading for smooth turning
                 noa._targetHeading = targetHeading;
@@ -2984,7 +2856,6 @@ function setupNoaEngine() {
                 // Store the target exit info for continuous strafing
                 noa._targetExit = targetExit;
                 noa._targetDir = targetDir;
-                console.log('Set target exit:', targetExit ? 'YES' : 'NO', 'direction:', targetDir);
                 
                 // Disable strafe
                 noa.inputs.state.left = false;
@@ -3022,13 +2893,11 @@ function setupNoaEngine() {
     movement.jumpForce = 0;      // No sustained upward force during jump
     movement.jumpTime = 100;     // Short jump time since we're using impulse only
     
-    console.log('Controls configured: Mouse disabled, W/S disabled, A/D for strafe/turn, Limited jump (0.9 blocks)');
     
     // Force immediate chunk generation
     forceChunkGeneration();
     
     // Force initial chunk generation after a delay
-    console.log('Engine initialized!');
     setTimeout(() => {
         noa.world.tick();
     }, 100);
@@ -3322,7 +3191,6 @@ function startPeriodicUpdates() {
             // Clear pending transaction on success
             localStorage.removeItem(pendingTxKey);
             
-            console.log('State transition submitted to Unicity network successfully');
             
             // Update status
             tokenStatus.totalSubmissions++;
@@ -3336,7 +3204,6 @@ function startPeriodicUpdates() {
             const tokenJson = playerToken.toJSON();
             localStorage.setItem('unicityRunner_playerToken', JSON.stringify(tokenJson));
             
-            console.log('State updated and saved');
         } catch (error) {
             // Update status for failure
             tokenStatus.totalSubmissions++;
@@ -3653,7 +3520,6 @@ setInterval(() => {
 
 // Handle player death
 function handlePlayerDeath() {
-    console.log('Player died! Respawning...');
     
     // Reset health
     currentPlayerHealth = 100;
@@ -3682,5 +3548,4 @@ function handlePlayerDeath() {
     });
     projectiles = [];
     
-    console.log('Player respawned with full health');
 }
