@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00064'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00066'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -2783,8 +2783,8 @@ function setupNoaEngine() {
         initialized: false
     };
     
-    // DISABLED: Coin collection check to isolate performance issue
-    /*setInterval(() => {
+    // Optimized coin collection - only check current and north chunks
+    setInterval(() => {
         if (!noa || !noa.playerEntity) return;
         
         const startTime = performance.now();
@@ -2812,22 +2812,12 @@ function setupNoaEngine() {
                 });
             }
             
-            // Add coins from pre-computed neighbors (North, East, West only)
-            const neighbors = chunkNeighbors.get(currentChunkKey);
-            if (neighbors) {
-                // Only check North, East, West neighbors for collection
-                [`${playerChunkX},${playerChunkZ - 1}`,   // North
-                 `${playerChunkX + 1},${playerChunkZ}`,   // East  
-                 `${playerChunkX - 1},${playerChunkZ}`    // West
-                ].forEach(neighborKey => {
-                    if (neighbors.has(neighborKey)) {
-                        const neighborCoins = coinsByChunk.get(neighborKey);
-                        if (neighborCoins) {
-                            neighborCoins.forEach((entity) => {
-                                nearbyCoins.add(entity);
-                            });
-                        }
-                    }
+            // Only add coins from north chunk for optimized collection
+            const northChunkKey = `${playerChunkX},${playerChunkZ - 1}`;
+            const northChunkCoins = coinsByChunk.get(northChunkKey);
+            if (northChunkCoins) {
+                northChunkCoins.forEach((entity) => {
+                    nearbyCoins.add(entity);
                 });
             }
         }
@@ -2872,11 +2862,8 @@ function setupNoaEngine() {
             const dy = coinPos[1] - playerPos[1];
             const dz = coinPos[2] - playerPos[2];
             
-            // Taxicab distance check - skip coins outside 8x8x8 box around player
-            if (Math.abs(dx) > 8 || Math.abs(dy) > 8 || Math.abs(dz) > 8) return;
-            
-            // Closer taxicab distance check for actual collection
-            if (Math.abs(dx) > 2 || Math.abs(dy) > 2 || Math.abs(dz) > 2) return;
+            // Skip far coins for performance
+            if (Math.abs(dx) > 8 || Math.abs(dy) > 8 || Math.abs(dz) > 8) continue;
             
             // Project coin offset onto forward direction
             const forwardDistance = dx * forwardX + dz * forwardZ;
@@ -2886,10 +2873,13 @@ function setupNoaEngine() {
             const sideZ = dz - forwardDistance * forwardZ;
             const sideDistanceSq = sideX * sideX + sideZ * sideZ;
             
-            // Collect if within range
-            if (Math.abs(forwardDistance) < 1.5 && 
-                sideDistanceSq < 0.25 && // 0.5 * 0.5
-                Math.abs(dy) < 1.0) {
+            // Narrow but long hitbox (front only):
+            // - Forward: 0.0 to +2.5 blocks (only in front)
+            // - Side-to-side: 0.75 block radius
+            // - Vertical: 1.5 blocks
+            if (forwardDistance >= 0.0 && forwardDistance <= 2.5 && 
+                sideDistanceSq < 0.5625 && // 0.75 * 0.75
+                Math.abs(dy) < 1.5) {
                 
                 const coinData = noa.entities.getState(coinEntity, 'isCoin');
                 
@@ -2934,7 +2924,7 @@ function setupNoaEngine() {
             }
         }
         
-    }, 100); // Check every 100ms (reduced from 50ms)*/
+    }, 100); // Check every 100ms (reduced from 50ms)
     
     // Moved outside of worldDataNeeded - see line after world generation setup
     
