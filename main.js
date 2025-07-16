@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00066'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00067'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -2875,10 +2875,10 @@ function setupNoaEngine() {
             
             // Narrow but long hitbox (front only):
             // - Forward: 0.0 to +2.5 blocks (only in front)
-            // - Side-to-side: 0.75 block radius
+            // - Side-to-side: 0.5 block radius
             // - Vertical: 1.5 blocks
             if (forwardDistance >= 0.0 && forwardDistance <= 2.5 && 
-                sideDistanceSq < 0.5625 && // 0.75 * 0.75
+                sideDistanceSq < 0.25 && // 0.5 * 0.5
                 Math.abs(dy) < 1.5) {
                 
                 const coinData = noa.entities.getState(coinEntity, 'isCoin');
