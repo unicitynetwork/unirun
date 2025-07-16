@@ -25,8 +25,14 @@ let corridorWestID;
 let droneEntity = null;
 let projectiles = [];
 let currentPlayerHealth = 100; // Track current health during gameplay
-let coins = new Map(); // Track all coins in the world: key = "x,y,z", value = entity
-let playerCoins = 0; // Player's coin balance
+let coins = new Map(); // Track all coins in the world: key = "x,z", value = entity
+let playerCoins = 0; // Player's coin balance (temporary counter)
+
+// Coin inventory tracking
+let confirmedURCBalance = 0; // Confirmed balance from minted tokens
+let pendingURCBalance = 0; // Pending balance from unminted coins
+const URC_COIN_ID_BYTES = new Uint8Array([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]); // URC coin type
+const URC_TOKEN_TYPE_BYTES = new Uint8Array([10]); // Token type for URC tokens
 
 // Token status tracking
 let tokenStatus = {
@@ -44,7 +50,10 @@ let tokenStatus = {
 function updateCoinDisplay() {
     const coinDisplay = document.getElementById('coinDisplay');
     if (coinDisplay) {
-        coinDisplay.textContent = `Coins: ${playerCoins}`;
+        coinDisplay.innerHTML = `
+            <div style="color: #33ff88;">Confirmed: ${confirmedURCBalance} URC</div>
+            <div style="color: #ffcc00;">Pending: ${pendingURCBalance} URC</div>
+        `;
     }
 }
 
@@ -316,6 +325,9 @@ async function initializeGame() {
     
     // Initialize player token
     await initializePlayerToken();
+    
+    // Initialize URC inventory
+    await initializeURCInventory();
     
     // Set up noa engine
     setupNoaEngine();
@@ -1459,6 +1471,226 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
 }
 
 
+// Initialize URC inventory from localStorage
+async function initializeURCInventory() {
+    try {
+        // Load confirmed balance from minted tokens
+        const inventoryData = localStorage.getItem('unicityRunner_urcInventory');
+        if (inventoryData) {
+            const inventory = JSON.parse(inventoryData);
+            confirmedURCBalance = inventory.confirmedBalance || 0;
+            
+            // Load and verify each token
+            if (inventory.tokens && Array.isArray(inventory.tokens)) {
+                // TODO: Verify tokens still exist on chain
+            }
+        }
+        
+        // Load pending mints
+        const pendingMints = localStorage.getItem('unicityRunner_pendingURCMints');
+        if (pendingMints) {
+            const pending = JSON.parse(pendingMints);
+            pendingURCBalance = pending.totalAmount || 0;
+            
+            // Try to complete any pending mints
+            if (pending.mints && Array.isArray(pending.mints)) {
+                for (const mint of pending.mints) {
+                    completeURCMint(mint).catch(err => {
+                        console.error('Failed to complete pending URC mint:', err);
+                    });
+                }
+            }
+        }
+        
+        updateCoinDisplay();
+    } catch (error) {
+        console.error('Failed to initialize URC inventory:', error);
+    }
+}
+
+// Mint URC token for collected coins
+async function mintURCToken(amount) {
+    if (!signingService || amount <= 0) return;
+    
+    try {
+        // Check if SDK is properly loaded
+        if (!window.UnicitySDK) {
+            console.error('UnicitySDK not loaded');
+            return;
+        }
+        // Add to pending balance immediately
+        pendingURCBalance += amount;
+        updateCoinDisplay();
+        
+        // Generate unique token ID
+        const tokenId = window.UnicitySDK.TokenId.create(crypto.getRandomValues(new Uint8Array(32)));
+        const tokenType = window.UnicitySDK.TokenType.create(URC_TOKEN_TYPE_BYTES);
+        
+        // Create coin data for the amount
+        // Use hex string instead of CoinId constructor which may not be exposed
+        const coinIdHex = window.UnicitySDK.HexConverter.encode(URC_COIN_ID_BYTES);
+        const coinData = window.UnicitySDK.TokenCoinData.fromJSON([
+            [coinIdHex, amount.toString()]
+        ]);
+        
+        // Generate nonce and predicate
+        const nonce = crypto.getRandomValues(new Uint8Array(32));
+        const predicate = await window.UnicitySDK.MaskedPredicate.create(
+            tokenId,
+            tokenType,
+            signingService,
+            window.UnicitySDK.HashAlgorithm.SHA256,
+            nonce
+        );
+        
+        // Create mint transaction data
+        const recipient = await window.UnicitySDK.DirectAddress.create(predicate.reference);
+        const salt = crypto.getRandomValues(new Uint8Array(32));
+        
+        const mintData = await window.UnicitySDK.MintTransactionData.create(
+            tokenId,
+            tokenType,
+            new Uint8Array(0), // No immutable data
+            coinData,
+            recipient.toString(),
+            salt,
+            null, // No data hash
+            null  // No reason
+        );
+        
+        // Save pending mint
+        const pendingMint = {
+            tokenId: window.UnicitySDK.HexConverter.encode(tokenId.bytes),
+            tokenType: window.UnicitySDK.HexConverter.encode(tokenType.bytes),
+            amount: amount,
+            nonce: window.UnicitySDK.HexConverter.encode(nonce),
+            salt: window.UnicitySDK.HexConverter.encode(salt),
+            recipient: recipient.toString(),
+            timestamp: Date.now(),
+            status: 'pending'
+        };
+        
+        savePendingURCMint(pendingMint);
+        
+        // Submit mint transaction
+        const aggregatorClient = new window.UnicitySDK.AggregatorClient(
+            'https://gateway-test.unicity.network:443'
+        );
+        const client = new window.UnicitySDK.StateTransitionClient(aggregatorClient);
+        
+        const commitment = await client.submitMintTransaction(mintData);
+        
+        // Update pending mint with commitment info
+        pendingMint.status = 'submitted';
+        pendingMint.requestId = commitment.requestId.toString();
+        savePendingURCMint(pendingMint);
+        
+        // Poll for inclusion proof
+        const inclusionProof = await waitForInclusionProof(client, commitment);
+        const transaction = await client.createTransaction(commitment, inclusionProof);
+        
+        // Create token state
+        const tokenState = await window.UnicitySDK.TokenState.create(predicate, null);
+        const token = new window.UnicitySDK.Token(tokenState, transaction, []);
+        
+        // Save to inventory
+        saveURCTokenToInventory(token, amount, pendingMint);
+        
+        // Update balances
+        pendingURCBalance -= amount;
+        confirmedURCBalance += amount;
+        updateCoinDisplay();
+        
+    } catch (error) {
+        console.error('Failed to mint URC token:', error);
+        // Keep in pending state for retry
+    }
+}
+
+// Save pending URC mint
+function savePendingURCMint(mintData) {
+    let pending = { mints: [], totalAmount: 0 };
+    const stored = localStorage.getItem('unicityRunner_pendingURCMints');
+    if (stored) {
+        pending = JSON.parse(stored);
+    }
+    
+    // Update or add mint
+    const existingIndex = pending.mints.findIndex(m => m.tokenId === mintData.tokenId);
+    if (existingIndex >= 0) {
+        pending.mints[existingIndex] = mintData;
+    } else {
+        pending.mints.push(mintData);
+    }
+    
+    // Recalculate total
+    pending.totalAmount = pending.mints.reduce((sum, m) => sum + m.amount, 0);
+    
+    localStorage.setItem('unicityRunner_pendingURCMints', JSON.stringify(pending));
+}
+
+// Save URC token to inventory
+function saveURCTokenToInventory(token, amount, pendingMint) {
+    let inventory = { tokens: [], confirmedBalance: 0 };
+    const stored = localStorage.getItem('unicityRunner_urcInventory');
+    if (stored) {
+        inventory = JSON.parse(stored);
+    }
+    
+    // Add token
+    inventory.tokens.push({
+        tokenId: pendingMint.tokenId,
+        amount: amount,
+        token: token.toJSON(),
+        mintedAt: Date.now()
+    });
+    
+    // Update balance
+    inventory.confirmedBalance = inventory.tokens.reduce((sum, t) => sum + t.amount, 0);
+    
+    localStorage.setItem('unicityRunner_urcInventory', JSON.stringify(inventory));
+    
+    // Remove from pending
+    removePendingURCMint(pendingMint.tokenId);
+}
+
+// Remove completed pending mint
+function removePendingURCMint(tokenId) {
+    const stored = localStorage.getItem('unicityRunner_pendingURCMints');
+    if (stored) {
+        const pending = JSON.parse(stored);
+        pending.mints = pending.mints.filter(m => m.tokenId !== tokenId);
+        pending.totalAmount = pending.mints.reduce((sum, m) => sum + m.amount, 0);
+        localStorage.setItem('unicityRunner_pendingURCMints', JSON.stringify(pending));
+    }
+}
+
+// Try to complete a pending mint
+async function completeURCMint(pendingMint) {
+    // TODO: Implement recovery logic for pending mints
+}
+
+// Wait for inclusion proof with timeout
+async function waitForInclusionProof(client, commitment, maxAttempts = 30) {
+    for (let i = 0; i < maxAttempts; i++) {
+        try {
+            const proof = await client.getInclusionProof(commitment);
+            const status = await proof.verify(commitment.requestId);
+            
+            if (status === window.UnicitySDK.InclusionProofVerificationStatus.OK) {
+                return proof;
+            }
+        } catch (error) {
+            // Continue polling
+        }
+        
+        // Wait 1 second between attempts
+        await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    
+    throw new Error('Timeout waiting for inclusion proof');
+}
+
 // Initialize player token management
 async function initializePlayerToken() {
     const savedTokenString = localStorage.getItem('unicityRunner_playerToken');
@@ -2392,7 +2624,8 @@ function setupNoaEngine() {
                     // Update display
                     updateCoinDisplay();
                     
-                    // TODO: Mint coin to player inventory
+                    // Mint URC token for this coin (with small delay to batch multiple coins)
+                    setTimeout(() => mintURCToken(coinData.value), 100);
                     
                     // Start fly-up animation
                     flyingCoins.set(coinEntity, {

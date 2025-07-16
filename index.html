@@ -79,13 +79,16 @@
             padding: 15px 20px;
             font-family: sans-serif;
             background: rgba(0, 0, 0, 0.7);
-            color: #ffcc00;
+            color: white;
             border-radius: 5px;
-            border: 2px solid #664400;
-            font-size: 20px;
+            border: 2px solid #444;
+            font-size: 16px;
             font-weight: bold;
-            min-width: 120px;
-            text-align: center;
+            min-width: 180px;
+            line-height: 1.5;
+        }
+        #coinDisplay div {
+            margin: 2px 0;
         }
     </style>
 </head>
@@ -98,7 +101,10 @@
             <div class="status-line">Initializing...</div>
         </div>
     </div>
-    <div id="coinDisplay">Coins: 0</div>
+    <div id="coinDisplay">
+        <div style="color: #33ff88;">Confirmed: 0 URC</div>
+        <div style="color: #ffcc00;">Pending: 0 URC</div>
+    </div>
     <div id="healthDisplay">
         <div id="healthText">Health: 100/100</div>
         <div id="healthBar">
