@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00051'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00052'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -27,6 +27,7 @@ let projectiles = [];
 let currentPlayerHealth = 100; // Track current health during gameplay
 let coins = new Map(); // Track all coins in the world: key = "x,z", value = entity
 let coinsByChunk = new Map(); // Track coins organized by chunk: key = "chunkX,chunkZ", value = Map of coins
+let chunkNeighbors = new Map(); // Pre-computed neighbor chunks: key = "chunkX,chunkZ", value = Set of neighbor chunk keys
 let playerCoins = 0; // Player's coin balance (temporary counter)
 
 // Coin inventory tracking
@@ -2617,6 +2618,16 @@ function setupNoaEngine() {
                 const chunkKey = `${chunkX},${chunkZ}`;
                 if (!coinsByChunk.has(chunkKey)) {
                     coinsByChunk.set(chunkKey, new Map());
+                    
+                    // Pre-compute and cache neighbors for this chunk
+                    const neighbors = new Set();
+                    // North, East, West only (no South)
+                    neighbors.add(`${chunkX},${chunkZ - 1}`);     // North
+                    neighbors.add(`${chunkX + 1},${chunkZ}`);     // East
+                    neighbors.add(`${chunkX - 1},${chunkZ}`);     // West
+                    neighbors.add(`${chunkX + 1},${chunkZ - 1}`); // North-East
+                    neighbors.add(`${chunkX - 1},${chunkZ - 1}`); // North-West
+                    chunkNeighbors.set(chunkKey, neighbors);
                 }
                 coinsByChunk.get(chunkKey).set(coinKey, coinEntity);
             }
@@ -2645,6 +2656,7 @@ function setupNoaEngine() {
             });
             // Remove chunk from tracking
             coinsByChunk.delete(chunkKey);
+            chunkNeighbors.delete(chunkKey);
         }
     });
     
@@ -2863,10 +2875,11 @@ function setupNoaEngine() {
     }, 5000); // Every 5 seconds
     
     // Update coin visibility based on distance and frustum
-    const maxRenderDistance = 32;
+    const maxRenderDistance = 24; // Reduced from 32
     const maxRenderDistanceSq = maxRenderDistance * maxRenderDistance;
     let visibilityUpdateCounter = 0;
-    let lastVisibleChunks = new Set();
+    let lastPlayerChunkKey = null;
+    let currentVisibleCoins = new Set();
     
     // Update visibility less frequently - every 30 frames (2 times per second at 60fps)
     noa.on('beforeRender', function() {
@@ -2876,72 +2889,69 @@ function setupNoaEngine() {
         if (!noa.playerEntity) return;
         
         const playerPos = noa.entities.getPosition(noa.playerEntity);
-        const camera = noa.rendering.camera;
-        
-        // Only check coins in nearby chunks
         const playerChunkX = Math.floor(playerPos[0] / 32);
         const playerChunkZ = Math.floor(playerPos[2] / 32);
+        const playerChunkKey = `${playerChunkX},${playerChunkZ}`;
         
-        // Only process coins in specific chunks relative to player
-        const visibleChunks = new Set([
-            `${playerChunkX},${playerChunkZ}`,       // Current chunk
-            `${playerChunkX},${playerChunkZ - 1}`,   // North
-            `${playerChunkX + 1},${playerChunkZ}`,   // East  
-            `${playerChunkX - 1},${playerChunkZ}`,   // West
-            `${playerChunkX + 1},${playerChunkZ - 1}`, // North-East
-            `${playerChunkX - 1},${playerChunkZ - 1}`, // North-West
-        ]);
-        
-        // Hide coins in chunks that are no longer visible
-        lastVisibleChunks.forEach(chunkKey => {
-            if (!visibleChunks.has(chunkKey)) {
-                const chunkCoins = coinsByChunk.get(chunkKey);
-                if (chunkCoins) {
-                    chunkCoins.forEach((entity) => {
-                        if (noa.entities.hasComponent(entity, noa.entities.names.mesh)) {
-                            const meshData = noa.entities.getMeshData(entity);
-                            if (meshData && meshData.mesh) {
-                                meshData.mesh.setEnabled(false);
-                            }
-                        }
-                    });
-                }
-            }
-        });
-        
-        // Process coins only in currently visible chunks
-        visibleChunks.forEach(chunkKey => {
-            const chunkCoins = coinsByChunk.get(chunkKey);
-            if (!chunkCoins) return;
+        // Only rebuild visible coins list if player moved to a new chunk
+        if (playerChunkKey !== lastPlayerChunkKey) {
+            lastPlayerChunkKey = playerChunkKey;
             
-            chunkCoins.forEach((entity) => {
+            // Hide all currently visible coins
+            currentVisibleCoins.forEach(entity => {
                 if (noa.entities.hasComponent(entity, noa.entities.names.mesh)) {
-                    const coinPos = noa.entities.getPosition(entity);
                     const meshData = noa.entities.getMeshData(entity);
-                    
                     if (meshData && meshData.mesh) {
-                        // Calculate distance to player
-                        const dx = coinPos[0] - playerPos[0];
-                        const dy = coinPos[1] - playerPos[1];
-                        const dz = coinPos[2] - playerPos[2];
-                        const distanceSq = dx * dx + dy * dy + dz * dz;
-                        
-                        // Check if within render distance
-                        if (distanceSq <= maxRenderDistanceSq) {
-                            // Check if in camera frustum
-                            const inFrustum = camera.isInFrustum(meshData.mesh);
-                            meshData.mesh.setEnabled(inFrustum);
-                        } else {
-                            // Beyond render distance - hide
-                            meshData.mesh.setEnabled(false);
-                        }
+                        meshData.mesh.setEnabled(false);
                     }
                 }
             });
-        });
+            
+            // Clear and rebuild visible coins set
+            currentVisibleCoins.clear();
+            
+            // Add coins from current chunk
+            const currentChunkCoins = coinsByChunk.get(playerChunkKey);
+            if (currentChunkCoins) {
+                currentChunkCoins.forEach(entity => currentVisibleCoins.add(entity));
+            }
+            
+            // Add coins from pre-computed neighbor chunks
+            const neighbors = chunkNeighbors.get(playerChunkKey);
+            if (neighbors) {
+                neighbors.forEach(neighborKey => {
+                    const neighborCoins = coinsByChunk.get(neighborKey);
+                    if (neighborCoins) {
+                        neighborCoins.forEach(entity => currentVisibleCoins.add(entity));
+                    }
+                });
+            }
+        }
         
-        // Update last visible chunks for next frame
-        lastVisibleChunks = visibleChunks;
+        // Update visibility only for coins in visible set
+        const camera = noa.rendering.camera;
+        currentVisibleCoins.forEach(entity => {
+            if (noa.entities.hasComponent(entity, noa.entities.names.mesh)) {
+                const coinPos = noa.entities.getPosition(entity);
+                const meshData = noa.entities.getMeshData(entity);
+                
+                if (meshData && meshData.mesh) {
+                    // Calculate distance to player
+                    const dx = coinPos[0] - playerPos[0];
+                    const dz = coinPos[2] - playerPos[2];
+                    const distanceSq = dx * dx + dz * dz;
+                    
+                    // Simple distance check (no Y component for performance)
+                    if (distanceSq <= maxRenderDistanceSq) {
+                        // Check if in camera frustum
+                        const inFrustum = camera.isInFrustum(meshData.mesh);
+                        meshData.mesh.setEnabled(inFrustum);
+                    } else {
+                        meshData.mesh.setEnabled(false);
+                    }
+                }
+            }
+        });
     });
     
     // Force chunk generation periodically
