@@ -2261,31 +2261,34 @@ function setupNoaEngine() {
         }
         
         // Create coin entities for this chunk
-        // TODO: Temporarily disabled coin placement
-        /*
         coinPositions.forEach(coinPos => {
             const worldX = x + coinPos.x;
             const worldZ = z + coinPos.z;
-            const worldY = 4; // Coins float at y=4 in north corridors (which are at y=3)
+            const worldY = 4.5; // Coins float at y=4.5 in north corridors (which are at y=3)
             
-            const coinKey = `${worldX},${worldY},${worldZ}`;
+            const coinKey = `${worldX},${worldZ}`; // Use only X,Z for key since Y is constant
             
             // Check if coin already exists at this position
             if (!coins.has(coinKey)) {
                 // Create coin entity using proper components
-                const coinEntity = noa.entities.add([worldX + 0.5, worldY, worldZ + 0.5]);
+                const coinEntity = noa.entities.add([worldX + 0.5, worldY + 0.5, worldZ + 0.5]);
                 
-                // Add mesh component
-                const clonedMesh = coinMesh.clone('coin_' + coinKey);
-                clonedMesh.setEnabled(true);
+                // Add mesh component using instance instead of clone for better performance
+                const coinInstance = coinMesh.createInstance('coin_' + coinKey);
+                coinInstance.rotation.z = Math.PI / 2; // Rotate 90 degrees to stand vertically
+                coinInstance.rotation.y = Math.PI / 2; // Turn 90 degrees so coin faces sideways
+                coinInstance.setEnabled(true);
                 noa.entities.addComponent(coinEntity, noa.entities.names.mesh, {
-                    mesh: clonedMesh,
-                    offset: [0, 0, 0]
+                    mesh: coinInstance,
+                    offset: [0, 0.25, 0] // Additional offset to ensure coin is above floor
                 });
                 
-                // Make it non-solid
+                // Make it non-solid and disable physics to keep vertical position
                 noa.entities.addComponent(coinEntity, noa.entities.names.collideTerrain, false);
                 noa.entities.addComponent(coinEntity, noa.entities.names.collideEntities, false);
+                noa.entities.addComponent(coinEntity, noa.entities.names.physics, {
+                    gravityMultiplier: 0 // No gravity - coin stays at fixed height
+                });
                 
                 // Add custom coin component for tracking
                 noa.entities.addComponent(coinEntity, 'isCoin', {
@@ -2298,7 +2301,6 @@ function setupNoaEngine() {
                 coins.set(coinKey, coinEntity);
             }
         });
-        */
         
         // tell noa the chunk's terrain data is now set
         noa.world.setChunkData(id, data);
@@ -2315,79 +2317,170 @@ function setupNoaEngine() {
         }
     });
     
-    // Create coin mesh
+    // Create coin mesh with lower tessellation for better performance
     const coinMesh = BABYLON.MeshBuilder.CreateCylinder('coin', {
         diameter: 0.5,
         height: 0.1,
-        tessellation: 16
+        tessellation: 8 // Reduced from 16 for better performance
     }, noa.rendering.getScene());
     
-    // Golden coin material
+    // Golden coin material - simplified for performance
     const coinMaterial = new BABYLON.StandardMaterial('coinMaterial', noa.rendering.getScene());
     coinMaterial.diffuseColor = new BABYLON.Color3(1, 0.84, 0); // Gold color
-    coinMaterial.specularColor = new BABYLON.Color3(1, 1, 1);
-    coinMaterial.emissiveColor = new BABYLON.Color3(0.3, 0.25, 0);
+    coinMaterial.specularColor = new BABYLON.Color3(0, 0, 0); // Disable specular for performance
+    coinMaterial.emissiveColor = new BABYLON.Color3(0.4, 0.35, 0); // Slightly brighter emissive instead
+    coinMaterial.freeze(); // Freeze material to improve performance
     coinMesh.material = coinMaterial;
     
     // Hide the original mesh
     coinMesh.setEnabled(false);
+    
+    // Track coins that are flying up after collection
+    const flyingCoins = new Map(); // key: entity, value: { startY, startTime }
     
     // Coin collection check
     setInterval(() => {
         if (!noa || !noa.playerEntity) return;
         
         const playerPos = noa.entities.getPosition(noa.playerEntity);
-        const playerX = Math.floor(playerPos[0]);
-        const playerY = Math.floor(playerPos[1]);
-        const playerZ = Math.floor(playerPos[2]);
         
-        // Check nearby positions for coins
-        for (let dx = -1; dx <= 1; dx++) {
-            for (let dy = -1; dy <= 2; dy++) {
-                for (let dz = -1; dz <= 1; dz++) {
-                    const checkX = playerX + dx;
-                    const checkY = playerY + dy;
-                    const checkZ = playerZ + dz;
-                    const coinKey = `${checkX},${checkY},${checkZ}`;
+        // Check coins based on distance rather than grid positions
+        coins.forEach((coinEntity, coinKey) => {
+            // Skip if already flying
+            if (flyingCoins.has(coinEntity)) return;
+            
+            const coinPos = noa.entities.getPosition(coinEntity);
+            
+            // Calculate distance between player and coin
+            const dx = playerPos[0] - coinPos[0];
+            const dy = playerPos[1] - coinPos[1];
+            const dz = playerPos[2] - coinPos[2];
+            
+            // Get player movement direction
+            const movement = noa.entities.getMovement(noa.playerEntity);
+            const heading = movement ? movement.heading : 0;
+            
+            // Calculate forward vector based on player heading
+            const forwardX = Math.sin(heading);
+            const forwardZ = Math.cos(heading);
+            
+            // Project coin offset onto forward direction
+            const forwardDistance = dx * forwardX + dz * forwardZ;
+            
+            // Calculate perpendicular (side) distance
+            const sideX = dx - forwardDistance * forwardX;
+            const sideZ = dz - forwardDistance * forwardZ;
+            const sideDistanceSq = sideX * sideX + sideZ * sideZ;
+            
+            // Collect if within 1.5 blocks forward/back, 0.5 blocks to sides, and 1 block vertically
+            const forwardRange = 1.5;
+            const sideRange = 0.5;
+            const verticalRange = 1.0;
+            
+            if (Math.abs(forwardDistance) < forwardRange && 
+                sideDistanceSq < sideRange * sideRange &&
+                Math.abs(dy) < verticalRange) {
+                const coinData = noa.entities.getState(coinEntity, 'isCoin');
+                
+                if (coinData && !coinData.collected) {
+                    // Mark as collected
+                    coinData.collected = true;
                     
-                    if (coins.has(coinKey)) {
-                        const coinEntity = coins.get(coinKey);
-                        const coinData = noa.entities.getState(coinEntity, 'isCoin');
-                        
-                        if (!coinData.collected) {
-                            // Mark as collected
-                            coinData.collected = true;
-                            
-                            // Add to player balance
-                            playerCoins += coinData.value;
-                            
-                            // Remove coin entity
-                            noa.ents.deleteEntity(coinEntity);
-                            coins.delete(coinKey);
-                            
-                            // TODO: Mint coin to player inventory
-                            
-                            // Update display (if we have one)
-                            updateCoinDisplay();
-                        }
-                    }
+                    // Add to player balance
+                    playerCoins += coinData.value;
+                    
+                    // Update display
+                    updateCoinDisplay();
+                    
+                    // TODO: Mint coin to player inventory
+                    
+                    // Start fly-up animation
+                    flyingCoins.set(coinEntity, {
+                        startY: coinPos[1],
+                        startTime: Date.now()
+                    });
+                    
+                    // Remove from normal tracking
+                    coins.delete(coinKey);
                 }
             }
-        }
-    }, 100); // Check every 100ms
+        });
+    }, 50); // Check every 50ms for more responsive collection
     
-    // Rotate coins
+    // Animate flying coins
     noa.on('tick', function() {
-        coins.forEach((entity, key) => {
-            // Check if entity still exists
-            if (noa.entities.hasComponent(entity, noa.entities.names.mesh)) {
-                const meshData = noa.entities.getMeshData(entity);
-                if (meshData && meshData.mesh) {
-                    meshData.mesh.rotation.y += 0.05; // Spin the coin
-                }
+        const currentTime = Date.now();
+        const coinsToRemove = [];
+        
+        flyingCoins.forEach((flyData, coinEntity) => {
+            const elapsed = (currentTime - flyData.startTime) / 1000; // seconds
+            const flySpeed = 15; // blocks per second
+            const newY = flyData.startY + (flySpeed * elapsed);
+            
+            if (newY >= 25) {
+                // Reached max height, remove coin
+                noa.ents.deleteEntity(coinEntity);
+                coinsToRemove.push(coinEntity);
             } else {
-                // Remove from tracking if entity no longer exists
-                coins.delete(key);
+                // Update position
+                const pos = noa.entities.getPosition(coinEntity);
+                noa.entities.setPosition(coinEntity, pos[0], newY, pos[2]);
+                
+                // Make coin spin faster as it flies up
+                const meshData = noa.entities.getMeshData(coinEntity);
+                if (meshData && meshData.mesh) {
+                    meshData.mesh.rotation.y += 0.3;
+                }
+            }
+        });
+        
+        // Clean up completed animations
+        coinsToRemove.forEach(entity => flyingCoins.delete(entity));
+    });
+    
+    // Cleanup non-existent coins periodically
+    setInterval(() => {
+        const toDelete = [];
+        coins.forEach((entity, key) => {
+            if (!noa.entities.hasComponent(entity, noa.entities.names.mesh)) {
+                toDelete.push(key);
+            }
+        });
+        toDelete.forEach(key => coins.delete(key));
+    }, 5000); // Every 5 seconds
+    
+    // Update coin visibility based on distance and frustum
+    const maxRenderDistance = 32;
+    const maxRenderDistanceSq = maxRenderDistance * maxRenderDistance;
+    
+    noa.on('beforeRender', function() {
+        if (!noa.playerEntity) return;
+        
+        const playerPos = noa.entities.getPosition(noa.playerEntity);
+        const camera = noa.rendering.camera;
+        
+        coins.forEach((entity, key) => {
+            if (noa.entities.hasComponent(entity, noa.entities.names.mesh)) {
+                const coinPos = noa.entities.getPosition(entity);
+                const meshData = noa.entities.getMeshData(entity);
+                
+                if (meshData && meshData.mesh) {
+                    // Calculate distance to player
+                    const dx = coinPos[0] - playerPos[0];
+                    const dy = coinPos[1] - playerPos[1];
+                    const dz = coinPos[2] - playerPos[2];
+                    const distanceSq = dx * dx + dy * dy + dz * dz;
+                    
+                    // Check if within render distance
+                    if (distanceSq <= maxRenderDistanceSq) {
+                        // Check if in camera frustum
+                        const inFrustum = camera.isInFrustum(meshData.mesh);
+                        meshData.mesh.setEnabled(inFrustum);
+                    } else {
+                        // Beyond render distance - hide
+                        meshData.mesh.setEnabled(false);
+                    }
+                }
             }
         });
     });
