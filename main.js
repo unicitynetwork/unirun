@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00035'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00043'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -292,24 +292,8 @@ async function initializeGame() {
     // Check for gamedev version change and clear chunk tokens if needed
     checkGamedevVersionAndClearChunks();
     
-    // Restore chunk tokenization queue
+    // Save reference to saved queue but don't process yet
     const savedQueue = localStorage.getItem('chunkTokenizationQueue');
-    if (savedQueue) {
-        try {
-            const restoredTasks = JSON.parse(savedQueue);
-            chunkTokenizationQueue.push(...restoredTasks);
-            queueStatus.totalQueued = restoredTasks.length;
-            localStorage.removeItem('chunkTokenizationQueue');
-            
-            // Start processing restored queue after a delay
-            setTimeout(() => {
-                processChunkTokenizationQueue();
-            }, 2000);
-        } catch (e) {
-            console.error('Failed to restore chunk tokenization queue:', e);
-            localStorage.removeItem('chunkTokenizationQueue');
-        }
-    }
     
     // Update status display periodically
     setInterval(updateTokenStatusDisplay, 1000);
@@ -328,6 +312,24 @@ async function initializeGame() {
     
     // Initialize URC inventory
     await initializeURCInventory();
+    
+    // Now that player token (and private key) is initialized, restore chunk tokenization queue
+    if (savedQueue) {
+        try {
+            const restoredTasks = JSON.parse(savedQueue);
+            chunkTokenizationQueue.push(...restoredTasks);
+            queueStatus.totalQueued = restoredTasks.length;
+            localStorage.removeItem('chunkTokenizationQueue');
+            
+            // Start processing restored queue after a delay
+            setTimeout(() => {
+                processChunkTokenizationQueue();
+            }, 2000);
+        } catch (e) {
+            console.error('Failed to restore chunk tokenization queue:', e);
+            localStorage.removeItem('chunkTokenizationQueue');
+        }
+    }
     
     // Set up noa engine
     setupNoaEngine();
@@ -690,6 +692,9 @@ async function createNewChunkToken(chunkX, chunkZ) {
     // Get pending key once at the beginning
     const pendingKey = getChunkStorageKey(chunkX, chunkZ, 'pending');
     
+    // Declare client at function scope so it's available in error handler
+    let client;
+    
     try {
         // Check if we have a saved mint transaction to recover
         const mintTxKey = getChunkStorageKey(chunkX, chunkZ, 'mintTx');
@@ -721,9 +726,11 @@ async function createNewChunkToken(chunkX, chunkZ) {
                 chunkNonce = window.UnicitySDK.HexConverter.decode(savedData.nonce);
                 
                 // Recreate signing service
-                const privateKey = window.UnicitySDK.HexConverter.decode(
-                    localStorage.getItem('unicityRunner_privateKey')
-                );
+                const privateKeyHex = localStorage.getItem('unicityRunner_privateKey');
+                if (!privateKeyHex) {
+                    throw new Error('Private key not found in localStorage');
+                }
+                const privateKey = window.UnicitySDK.HexConverter.decode(privateKeyHex);
                 const chunkSigningService = await window.UnicitySDK.SigningService.createFromSecret(
                     privateKey,
                     chunkNonce
@@ -773,9 +780,11 @@ async function createNewChunkToken(chunkX, chunkZ) {
             
             // Create signing service for this chunk with deterministic nonce
             chunkNonce = await generateChunkNonce(chunkX, chunkZ, WORLD_SEED);
-            const privateKey = window.UnicitySDK.HexConverter.decode(
-                localStorage.getItem('unicityRunner_privateKey')
-            );
+            const privateKeyHex = localStorage.getItem('unicityRunner_privateKey');
+            if (!privateKeyHex) {
+                throw new Error('Private key not found in localStorage');
+            }
+            const privateKey = window.UnicitySDK.HexConverter.decode(privateKeyHex);
             const chunkSigningService = await window.UnicitySDK.SigningService.createFromSecret(
                 privateKey,
                 chunkNonce
@@ -829,9 +838,9 @@ async function createNewChunkToken(chunkX, chunkZ) {
         
         // Submit to Unicity network
         const aggregatorClient = new window.UnicitySDK.AggregatorClient(
-            'https://gateway-test.unicity.network:443'
+            'https://goggregator-test.unicity.network'
         );
-        const client = new window.UnicitySDK.StateTransitionClient(aggregatorClient);
+        client = new window.UnicitySDK.StateTransitionClient(aggregatorClient);
         
         let commitment;
         const savedData = JSON.parse(localStorage.getItem(mintTxKey));
@@ -928,37 +937,12 @@ async function createNewChunkToken(chunkX, chunkZ) {
         );
         
         // Create the transaction with inclusion proof, with retry for sporadic hash algorithm error
-        let mintTransaction;
-        let retryCount = 0;
-        const maxRetries = 3;
+        const mintTransaction = await retryOnInclusionProofError(async () => {
+            return await client.createTransaction(commitment, inclusionProof);
+        });
         
-        while (retryCount < maxRetries) {
-            try {
-                mintTransaction = await client.createTransaction(commitment, inclusionProof);
-                break; // Success, exit loop
-            } catch (error) {
-                if (error.message && error.message.includes('Invalid inclusion proof hash algorithm') && retryCount < maxRetries - 1) {
-                    retryCount++;
-                    
-                    // Wait a bit before retry
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                    
-                    // Refetch inclusion proof
-                    inclusionProof = await window.UnicitySDK.waitInclusionProof(
-                        client,
-                        commitment,
-                        AbortSignal.timeout(30000),
-                        1000
-                    );
-                } else {
-                    // Not the sporadic error or max retries reached
-                    throw error;
-                }
-            }
-        }
-        
-        // Create token state without data (since we use null data hash in mint transaction)
-        const tokenState = await window.UnicitySDK.TokenState.create(predicate, null);
+        // Create token state with empty data to match mint transaction
+        const tokenState = await window.UnicitySDK.TokenState.create(predicate, new Uint8Array(0));
         
         // Create the complete token
         const chunkToken = new window.UnicitySDK.Token(
@@ -990,6 +974,67 @@ async function createNewChunkToken(chunkX, chunkZ) {
         
         // Check for REQUEST_ID_EXISTS error
         if (error.message && error.message.includes('REQUEST_ID_EXISTS')) {
+            console.warn(`REQUEST_ID_EXISTS for chunk (${chunkX}, ${chunkZ}), attempting recovery...`);
+            
+            // The mint transaction was already submitted, try to wait for inclusion proof
+            const mintTxKey = getChunkStorageKey(chunkX, chunkZ, 'mintTx');
+            const savedMintTx = localStorage.getItem(mintTxKey);
+            
+            if (savedMintTx && JSON.parse(savedMintTx).submitted) {
+                // Clear the pending state
+                localStorage.removeItem(pendingKey);
+                
+                // Try to recover by waiting for inclusion proof
+                try {
+                    // We need to recreate the commitment to poll for inclusion proof
+                    const signingService = await window.UnicitySDK.SigningService.createFromSecret(
+                        window.UnicitySDK.MINTER_SECRET,
+                        tokenId.bytes
+                    );
+                    const commitment = await window.UnicitySDK.Commitment.create(mintData, signingService);
+                    
+                    // Wait for inclusion proof
+                    const inclusionProof = await window.UnicitySDK.waitInclusionProof(
+                        client,
+                        commitment,
+                        AbortSignal.timeout(30000),
+                        1000
+                    );
+                    
+                    // Create the transaction
+                    const mintTransaction = await retryOnInclusionProofError(async () => {
+                        return await client.createTransaction(commitment, inclusionProof);
+                    });
+                    
+                    // Create token state with empty data to match mint transaction
+                    const tokenState = await window.UnicitySDK.TokenState.create(predicate, new Uint8Array(0));
+                    
+                    // Create the complete token
+                    const chunkToken = new window.UnicitySDK.Token(
+                        tokenState,
+                        mintTransaction,
+                        []
+                    );
+                    
+                    // Save the complete token
+                    const tokenJson = chunkToken.toJSON();
+                    saveChunkTokenData(chunkX, chunkZ, { 
+                        token: tokenJson,
+                        state: chunkState
+                    });
+                    
+                    // Clear mint transaction
+                    localStorage.removeItem(mintTxKey);
+                    pendingMintTransactions.delete(`${chunkX},${chunkZ}`);
+                    
+                    return chunkToken;
+                } catch (recoveryError) {
+                    console.error(`Recovery failed for chunk (${chunkX}, ${chunkZ}):`, recoveryError);
+                    // Keep the mint transaction data for later recovery
+                    return null;
+                }
+            }
+            
             // Keep the mint transaction data for recovery
             // Don't throw the error since this is recoverable
             return null;
@@ -1574,7 +1619,7 @@ async function mintURCToken(amount) {
         
         // Submit mint transaction
         const aggregatorClient = new window.UnicitySDK.AggregatorClient(
-            'https://gateway-test.unicity.network:443'
+            'https://goggregator-test.unicity.network'
         );
         const client = new window.UnicitySDK.StateTransitionClient(aggregatorClient);
         
@@ -1587,7 +1632,11 @@ async function mintURCToken(amount) {
         
         // Poll for inclusion proof
         const inclusionProof = await waitForInclusionProof(client, commitment);
-        const transaction = await client.createTransaction(commitment, inclusionProof);
+        
+        // Create transaction with retry logic for hash algorithm errors
+        const transaction = await retryOnInclusionProofError(async () => {
+            return await client.createTransaction(commitment, inclusionProof);
+        });
         
         // Create token state
         const tokenState = await window.UnicitySDK.TokenState.create(predicate, null);
@@ -1670,7 +1719,7 @@ async function completeURCMint(pendingMint) {
     // TODO: Implement recovery logic for pending mints
 }
 
-// Wait for inclusion proof with timeout
+// Wait for inclusion proof with timeout and retry logic
 async function waitForInclusionProof(client, commitment, maxAttempts = 30) {
     for (let i = 0; i < maxAttempts; i++) {
         try {
@@ -1689,6 +1738,34 @@ async function waitForInclusionProof(client, commitment, maxAttempts = 30) {
     }
     
     throw new Error('Timeout waiting for inclusion proof');
+}
+
+// Retry logic for inclusion proof validation errors
+async function retryOnInclusionProofError(fn, maxRetries = 5) {
+    let lastError;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            return await fn();
+        } catch (error) {
+            lastError = error;
+            
+            // Check if it's the specific inclusion proof hash algorithm error
+            if (error.message && error.message.includes('Invalid inclusion proof hash algorithm')) {
+                console.warn(`Inclusion proof hash algorithm error (attempt ${attempt}/${maxRetries}), retrying...`);
+                
+                // Wait before retry (exponential backoff)
+                await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+                continue;
+            }
+            
+            // For other errors, throw immediately
+            throw error;
+        }
+    }
+    
+    // If we exhausted all retries, throw the last error
+    throw lastError;
 }
 
 // Initialize player token management
@@ -1813,7 +1890,7 @@ async function createNewPlayerToken() {
     const dataHash = await new window.UnicitySDK.DataHasher(window.UnicitySDK.HashAlgorithm.SHA256).update(stateData).digest();
     
     // Create aggregator client for Unicity network
-    const aggregatorClient = new window.UnicitySDK.AggregatorClient('https://gateway-test.unicity.network:443');
+    const aggregatorClient = new window.UnicitySDK.AggregatorClient('https://goggregator-test.unicity.network');
     const client = new window.UnicitySDK.StateTransitionClient(aggregatorClient);
     
     // Create mint transaction data
@@ -1844,8 +1921,10 @@ async function createNewPlayerToken() {
             1000 // Check every second
         );
         
-        // Create the transaction with inclusion proof
-        const mintTransaction = await client.createTransaction(mintCommitment, inclusionProof);
+        // Create the transaction with inclusion proof and retry logic
+        const mintTransaction = await retryOnInclusionProofError(async () => {
+            return await client.createTransaction(mintCommitment, inclusionProof);
+        });
         
         // Create token state
         const tokenState = await window.UnicitySDK.TokenState.create(predicate, stateData);
@@ -2570,14 +2649,44 @@ function setupNoaEngine() {
     // Track coins that are flying up after collection
     const flyingCoins = new Map(); // key: entity, value: { startY, startTime }
     
-    // Coin collection check
+    // Coin collection check - optimized with spatial indexing
+    const nearbyCoins = new Set(); // Track only nearby coins
+    let lastPlayerChunkX = null;
+    let lastPlayerChunkZ = null;
+    
     setInterval(() => {
         if (!noa || !noa.playerEntity) return;
         
         const playerPos = noa.entities.getPosition(noa.playerEntity);
+        const playerChunkX = Math.floor(playerPos[0] / 32);
+        const playerChunkZ = Math.floor(playerPos[2] / 32);
         
-        // Check coins based on distance rather than grid positions
-        coins.forEach((coinEntity, coinKey) => {
+        // Rebuild nearby coins list if player moved to new chunk
+        if (playerChunkX !== lastPlayerChunkX || playerChunkZ !== lastPlayerChunkZ) {
+            lastPlayerChunkX = playerChunkX;
+            lastPlayerChunkZ = playerChunkZ;
+            
+            nearbyCoins.clear();
+            coins.forEach((entity, key) => {
+                const pos = noa.entities.getPosition(entity);
+                const chunkX = Math.floor(pos[0] / 32);
+                const chunkZ = Math.floor(pos[2] / 32);
+                
+                // Only track coins in adjacent chunks
+                if (Math.abs(chunkX - playerChunkX) <= 1 && Math.abs(chunkZ - playerChunkZ) <= 1) {
+                    nearbyCoins.add(entity);
+                }
+            });
+        }
+        
+        // Get player movement direction
+        const movement = noa.entities.getMovement(noa.playerEntity);
+        const heading = movement ? movement.heading : 0;
+        const forwardX = Math.sin(heading);
+        const forwardZ = Math.cos(heading);
+        
+        // Only check nearby coins
+        nearbyCoins.forEach((coinEntity) => {
             // Skip if already flying
             if (flyingCoins.has(coinEntity)) return;
             
@@ -2588,13 +2697,8 @@ function setupNoaEngine() {
             const dy = playerPos[1] - coinPos[1];
             const dz = playerPos[2] - coinPos[2];
             
-            // Get player movement direction
-            const movement = noa.entities.getMovement(noa.playerEntity);
-            const heading = movement ? movement.heading : 0;
-            
-            // Calculate forward vector based on player heading
-            const forwardX = Math.sin(heading);
-            const forwardZ = Math.cos(heading);
+            // Quick distance check first
+            if (Math.abs(dx) > 2 || Math.abs(dy) > 2 || Math.abs(dz) > 2) return;
             
             // Project coin offset onto forward direction
             const forwardDistance = dx * forwardX + dz * forwardZ;
@@ -2604,14 +2708,11 @@ function setupNoaEngine() {
             const sideZ = dz - forwardDistance * forwardZ;
             const sideDistanceSq = sideX * sideX + sideZ * sideZ;
             
-            // Collect if within 1.5 blocks forward/back, 0.5 blocks to sides, and 1 block vertically
-            const forwardRange = 1.5;
-            const sideRange = 0.5;
-            const verticalRange = 1.0;
-            
-            if (Math.abs(forwardDistance) < forwardRange && 
-                sideDistanceSq < sideRange * sideRange &&
-                Math.abs(dy) < verticalRange) {
+            // Collect if within range
+            if (Math.abs(forwardDistance) < 1.5 && 
+                sideDistanceSq < 0.25 && // 0.5 * 0.5
+                Math.abs(dy) < 1.0) {
+                
                 const coinData = noa.entities.getState(coinEntity, 'isCoin');
                 
                 if (coinData && !coinData.collected) {
@@ -2633,12 +2734,17 @@ function setupNoaEngine() {
                         startTime: Date.now()
                     });
                     
-                    // Remove from normal tracking
-                    coins.delete(coinKey);
+                    // Remove from tracking
+                    coins.forEach((entity, key) => {
+                        if (entity === coinEntity) {
+                            coins.delete(key);
+                            nearbyCoins.delete(coinEntity);
+                        }
+                    });
                 }
             }
         });
-    }, 50); // Check every 50ms for more responsive collection
+    }, 100); // Check every 100ms (reduced from 50ms)
     
     // Animate flying coins
     noa.on('tick', function() {
@@ -2685,18 +2791,42 @@ function setupNoaEngine() {
     // Update coin visibility based on distance and frustum
     const maxRenderDistance = 32;
     const maxRenderDistanceSq = maxRenderDistance * maxRenderDistance;
+    let visibilityUpdateCounter = 0;
     
+    // Update visibility less frequently - every 10 frames
     noa.on('beforeRender', function() {
+        visibilityUpdateCounter++;
+        if (visibilityUpdateCounter % 10 !== 0) return; // Only run every 10th frame
+        
         if (!noa.playerEntity) return;
         
         const playerPos = noa.entities.getPosition(noa.playerEntity);
         const camera = noa.rendering.camera;
         
+        // Only check coins in nearby chunks
+        const playerChunkX = Math.floor(playerPos[0] / 32);
+        const playerChunkZ = Math.floor(playerPos[2] / 32);
+        
         coins.forEach((entity, key) => {
             if (noa.entities.hasComponent(entity, noa.entities.names.mesh)) {
                 const coinPos = noa.entities.getPosition(entity);
-                const meshData = noa.entities.getMeshData(entity);
                 
+                // Quick chunk-based culling first
+                const coinChunkX = Math.floor(coinPos[0] / 32);
+                const coinChunkZ = Math.floor(coinPos[2] / 32);
+                const chunkDx = Math.abs(coinChunkX - playerChunkX);
+                const chunkDz = Math.abs(coinChunkZ - playerChunkZ);
+                
+                if (chunkDx > 2 || chunkDz > 2) {
+                    // Far chunks - hide without distance calculation
+                    const meshData = noa.entities.getMeshData(entity);
+                    if (meshData && meshData.mesh) {
+                        meshData.mesh.setEnabled(false);
+                    }
+                    return;
+                }
+                
+                const meshData = noa.entities.getMeshData(entity);
                 if (meshData && meshData.mesh) {
                     // Calculate distance to player
                     const dx = coinPos[0] - playerPos[0];
@@ -3332,7 +3462,7 @@ function startPeriodicUpdates() {
         let dataHash = await new window.UnicitySDK.DataHasher(window.UnicitySDK.HashAlgorithm.SHA256).update(stateData).digest();
         
         // Create aggregator client for Unicity network
-        const aggregatorClient = new window.UnicitySDK.AggregatorClient('https://gateway-test.unicity.network:443');
+        const aggregatorClient = new window.UnicitySDK.AggregatorClient('https://goggregator-test.unicity.network');
         const client = new window.UnicitySDK.StateTransitionClient(aggregatorClient);
         
         // Check if we have a pending transaction from a previous attempt
@@ -3491,7 +3621,9 @@ function startPeriodicUpdates() {
                 AbortSignal.timeout(10000), // 10 second timeout for updates
                 1000 // Check every second
             );
-            const transaction = await client.createTransaction(commitment, inclusionProof);
+            const transaction = await retryOnInclusionProofError(async () => {
+                return await client.createTransaction(commitment, inclusionProof);
+            });
             
             // Create new token state with new predicate
             const newTokenState = await window.UnicitySDK.TokenState.create(
