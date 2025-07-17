@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00118'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00119'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -2654,9 +2654,9 @@ function setupNoaEngine() {
                     
                     let voxelID = 0;
                     
-                    // Underground is all dirt
+                    // Underground is empty void
                     if (worldY < 0) {
-                        voxelID = dirtID;
+                        voxelID = 0; // Empty void below ground
                     }
                     // Ground level (y=0)
                     else if (worldY === 0) {
