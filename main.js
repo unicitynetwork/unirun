@@ -3693,7 +3693,7 @@ function setupNoaEngine() {
         if (distanceValue) {
             distanceValue.textContent = `${Math.floor(totalDistanceTraveled)} blocks`;
         }
-    }, 1000); // Update every second
+    }, 100); // Update 10 times per second
     
     // Electric trap collision detection
     setInterval(() => {
