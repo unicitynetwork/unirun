@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00122'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00123'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -4826,7 +4826,7 @@ function fireProjectile(fromPos, toPos) {
     const dirZ = dz / distance;
     
     // Set projectile physics properties - behave like bullets
-    const bulletSpeed = 30; // Much faster for bullet-like behavior
+    const bulletSpeed = 60; // Doubled speed for deadlier bullets
     const physics = noa.entities.getPhysics(projectileEntity);
     if (physics && physics.body) {
         physics.body.mass = 0.01; // Very light
@@ -4887,7 +4887,7 @@ setInterval(() => {
         const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
         
         if (distance < 1) { // Hit player
-            damagePlayer(5, 'Killed by drone');
+            damagePlayer(10, 'Killed by drone'); // Doubled damage from 5 to 10
             noa.entities.deleteEntity(proj.entity);
             return false;
         }
