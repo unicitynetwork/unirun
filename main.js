@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00119'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00120'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -3726,6 +3726,18 @@ function setupNoaEngine() {
             forceChunkGeneration();
         }
     }, 5000); // Every 5 seconds
+    
+    // Check if player has fallen into the void
+    setInterval(() => {
+        if (!noa || !noa.playerEntity || isPlayerDead) return;
+        
+        const pos = noa.entities.getPosition(noa.playerEntity);
+        
+        // Kill player if they fall below y=-10 into the void
+        if (pos[1] < -10) {
+            handlePlayerDeath('Fell into the void');
+        }
+    }, 100); // Check 10 times per second
     
     
     // Check player position and rotate to face corridor direction
