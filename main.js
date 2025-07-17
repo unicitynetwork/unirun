@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00111'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00113'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -649,7 +649,6 @@ async function tokenizeChunk(chunkX, chunkZ) {
                 // Continue with normal flow
             } else if (mintData.submitted) {
                 // Create a promise that attempts to complete the minting
-                console.log(`Chunk (${chunkX}, ${chunkZ}) has submitted mint transaction, attempting recovery...`);
                 const recoveryPromise = createNewChunkToken(chunkX, chunkZ).catch(error => {
                     console.error(`Recovery failed for chunk (${chunkX}, ${chunkZ}):`, error);
                     return null;
@@ -952,7 +951,6 @@ async function createNewChunkToken(chunkX, chunkZ) {
             }
             
             // Transaction was submitted but token not saved - try to recover it
-            console.log(`Attempting to recover submitted mint transaction for chunk (${chunkX}, ${chunkZ})`);
             
             try {
                 // For recovery, we need to reconstruct the mint data first
@@ -977,7 +975,6 @@ async function createNewChunkToken(chunkX, chunkZ) {
                 };
                 
                 // Wait for inclusion proof
-                console.log(`Waiting for inclusion proof for chunk (${chunkX}, ${chunkZ})...`);
                 const inclusionProof = await window.UnicitySDK.waitInclusionProof(
                     client,
                     commitment,
@@ -985,12 +982,6 @@ async function createNewChunkToken(chunkX, chunkZ) {
                     1000 // Check every second
                 );
                 
-                // Log inclusion proof structure for debugging
-                console.log(`Got inclusion proof for chunk (${chunkX}, ${chunkZ}):`, {
-                    hasTransactionHash: !!inclusionProof.transactionHash,
-                    hasAuthenticator: !!inclusionProof.authenticator,
-                    inclusionProof
-                });
                 
                 // For mint transactions that were already submitted, we might not get a proper inclusion proof
                 // In this case, we need to construct the transaction manually
@@ -1051,7 +1042,6 @@ async function createNewChunkToken(chunkX, chunkZ) {
                 const chunkKey = `${chunkX},${chunkZ}`;
                 pendingMintTransactions.delete(chunkKey);
                 
-                console.log(`Successfully recovered mint transaction for chunk (${chunkX}, ${chunkZ})`);
                 return chunkToken;
                 
             } catch (recoveryError) {
@@ -1076,7 +1066,6 @@ async function createNewChunkToken(chunkX, chunkZ) {
             }
             
             // TEST RECOVERY: Verify we can recover the token before submitting
-            console.log(`Testing token recovery for chunk (${chunkX}, ${chunkZ}) before submission...`);
             try {
                 // Simulate recovery by recreating all necessary objects from saved data
                 const testTokenId = window.UnicitySDK.TokenId.create(
@@ -1117,7 +1106,6 @@ async function createNewChunkToken(chunkX, chunkZ) {
                     window.UnicitySDK.HexConverter.decode(savedData.nonce)
                 );
                 
-                console.log(`Recovery test passed for chunk (${chunkX}, ${chunkZ}). Proceeding with submission.`);
             } catch (recoveryTestError) {
                 const errorMsg = `CRITICAL ERROR: Recovery test failed for chunk (${chunkX}, ${chunkZ}) BEFORE submission: ${recoveryTestError.message}`;
                 console.error(errorMsg);
@@ -1167,7 +1155,6 @@ async function createNewChunkToken(chunkX, chunkZ) {
                     
                     // Ensure tokenData exists (for old format compatibility)
                     if (!savedData.tokenData) {
-                        console.log(`Adding missing tokenData field for chunk (${chunkX}, ${chunkZ})`);
                         savedData.tokenData = window.UnicitySDK.HexConverter.encode(new Uint8Array(0));
                     }
                     
@@ -1745,12 +1732,6 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
     const coinPositions = [];
     const rng = seededRandom(`${seed}_coins_${chunkX}_${chunkZ}`);
     
-    // Log coin probability for this chunk (only for chunks with north corridors)
-    if (chunkZ >= 0 && (chunkZ <= 100 || chunkZ % 100 === 0)) {
-        const distanceNorth = Math.max(0, chunkZ);
-        const coinProbability = Math.min(0.5, 0.005 + (0.495 * distanceNorth / 4000));
-        console.log(`Chunk (${chunkX}, ${chunkZ}): Coin probability = ${(coinProbability * 100).toFixed(2)}%`);
-    }
     
     // Determine safe zones around rooms (5 blocks before and after to include stairs)
     const roomSafeZones = new Set();
@@ -1809,9 +1790,9 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
             }
             
             // Calculate coin probability based on distance north
-            // Start at 0.5% at spawn (z=0), increase to 50% at z=4000 chunks
+            // Start at 0.5% at spawn (z=0), increase to 50% at z=250 chunks, max 75% at z=375
             const distanceNorth = Math.max(0, chunkZ);
-            const coinProbability = Math.min(0.5, 0.005 + (0.495 * distanceNorth / 4000));
+            const coinProbability = Math.min(0.75, 0.005 + (0.495 * distanceNorth / 250));
             
             // Only place coins if not in safe zone
             if (!inSafeZone && rng() < coinProbability) {
@@ -1843,14 +1824,12 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
     
     // Skip traps in the initial chunk (0,0) for player safety
     if (chunkX === 0 && chunkZ === 0) {
-        console.log(`Chunk (${chunkX}, ${chunkZ}): Skipping traps in initial chunk`);
         return { tiles, coinPositions, trapPositions };
     }
     
     // Check if this chunk has a room - if so, no traps!
     const chunkHasRoom = roomExists(chunkX, chunkZ, seed);
     if (chunkHasRoom) {
-        console.log(`Chunk (${chunkX}, ${chunkZ}): Has room, skipping trap generation`);
         return { tiles, coinPositions, trapPositions };
     }
     
@@ -1868,19 +1847,11 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
     
     // Only generate traps if we have north corridors but no room
     if (!hasNorthCorridor) {
-        console.log(`Chunk (${chunkX}, ${chunkZ}): No north corridors, skipping trap generation`);
         return { tiles, coinPositions, trapPositions };
     }
     
-    console.log(`Chunk (${chunkX}, ${chunkZ}): Has north corridor but no room - generating traps`);
     const trapRng = seededRandom(`${seed}_traps_${chunkX}_${chunkZ}`);
     
-    // Log trap probability for this chunk
-    if (chunkZ >= 0 && (chunkZ <= 100 || chunkZ % 100 === 0)) {
-        const distanceNorth = Math.max(0, chunkZ);
-        const trapProbability = Math.min(0.15, 0.001 + (0.149 * distanceNorth / 4000));
-        console.log(`Chunk (${chunkX}, ${chunkZ}): Trap probability = ${(trapProbability * 100).toFixed(2)}%`);
-    }
     
     // Create a set of coin positions for quick lookup
     const coinPosSet = new Set(coinPositions.map(pos => `${pos.x},${pos.z}`));
@@ -1899,14 +1870,13 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
                     coinBlockedCount++;
                 } else {
                     // Calculate trap probability based on distance north
-                    // Start at 0.1% at spawn (z=0), increase to 15% at z=4000 chunks
+                    // Start at 0.1% at spawn (z=0), increase to 15% at z=250 chunks, max 22.5% at z=375
                     const distanceNorth = Math.max(0, chunkZ);
-                    const trapProbability = Math.min(0.15, 0.001 + (0.149 * distanceNorth / 4000));
+                    const trapProbability = Math.min(0.225, 0.001 + (0.149 * distanceNorth / 250));
                     
                     // Place trap based on calculated probability
                     if (trapRng() < trapProbability) {
                         trapPositions.push({ x, z });
-                        console.log(`Trap placed at (${x}, ${z}) in chunk (${chunkX}, ${chunkZ})`);
                         // Skip ahead to ensure traps are spaced out
                         x += 2;
                     }
@@ -1915,7 +1885,6 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
         }
     }
     
-    console.log(`Chunk (${chunkX}, ${chunkZ}): ${corridorCount} corridor positions, ${coinBlockedCount} have coins, ${trapPositions.length} traps generated`);
     
     return { tiles, coinPositions, trapPositions };
 }
@@ -2450,17 +2419,20 @@ function setupNoaEngine() {
         debug: true,
         showFPS: true,
         chunkSize: 32,
-        chunkAddDistance: 10,
-        chunkRemoveDistance: 14,
+        chunkAddDistance: 6,  // Reduced from 10 for better performance
+        chunkRemoveDistance: 8,  // Reduced to match
         // Add more aggressive chunk loading
         worldGenWhilePaused: true,
-        manuallyControlChunkLoading: false,
+        manuallyControlChunkLoading: false, // Let noa handle chunk loading
         // Enable auto-step for climbing stairs
         playerAutoStep: true,
     };
     
     // Create engine
     noa = new Engine(opts);
+    
+    // Note: noa-engine handles chunk loading automatically based on chunkAddDistance
+    // We've set it to 10 chunks which should provide good visibility
     
     // Log default camera parameters
     
@@ -2641,7 +2613,6 @@ function setupNoaEngine() {
         const physics = noa.entities.getPhysics(noa.playerEntity);
         if (physics && physics.body) {
             physics.body.gravityMultiplier = 16.0; // 16x gravity (doubled from 8x)
-            console.log('Set gravity multiplier on physics body to 16.0');
         }
         
         // Reduce air drag to maintain horizontal momentum during long jumps
@@ -3057,19 +3028,9 @@ function setupNoaEngine() {
                 if (!coinsByChunk.has(chunkKey)) {
                     coinsByChunk.set(chunkKey, new Map());
                     
-                    // Pre-compute and cache neighbors for this chunk (extended range, especially north)
-                    const neighbors = new Set();
-                    
-                    // Load chunks in a 9x9 grid centered on this chunk, but extending more to the north
-                    // This ensures coins are visible well ahead of the player
-                    for (let dx = -3; dx <= 3; dx++) {
-                        for (let dz = -5; dz <= 3; dz++) { // Extended north range (-5 to 3)
-                            if (dx === 0 && dz === 0) continue; // Skip self
-                            neighbors.add(`${chunkX + dx},${chunkZ + dz}`);
-                        }
-                    }
-                    
-                    chunkNeighbors.set(chunkKey, neighbors);
+                    // Don't pre-compute neighbors - we'll do it dynamically based on corridor
+                    // This allows us to only load coins in the direction we're facing
+                    chunkNeighbors.set(chunkKey, new Set());
                 }
                 coinsByChunk.get(chunkKey).set(coinKey, coinEntity);
             }
@@ -3077,7 +3038,6 @@ function setupNoaEngine() {
         
         // Create electric trap entities for this chunk
         if (trapPositions.length > 0) {
-            console.log(`Creating ${trapPositions.length} trap entities for chunk at (${x}, ${z})`);
         }
         trapPositions.forEach(trapPos => {
             const worldX = x + trapPos.x;
@@ -3342,13 +3302,15 @@ function setupNoaEngine() {
                 });
             }
             
-            // Only add coins from north chunk for optimized collection
-            const northChunkKey = `${playerChunkX},${playerChunkZ - 1}`;
-            const northChunkCoins = coinsByChunk.get(northChunkKey);
-            if (northChunkCoins) {
-                northChunkCoins.forEach((entity) => {
-                    nearbyCoins.add(entity);
-                });
+            // Add coins from 4 chunks to the north for much better visibility
+            for (let northOffset = 1; northOffset <= 4; northOffset++) {
+                const northChunkKey = `${playerChunkX},${playerChunkZ - northOffset}`;
+                const northChunkCoins = coinsByChunk.get(northChunkKey);
+                if (northChunkCoins) {
+                    northChunkCoins.forEach((entity) => {
+                        nearbyCoins.add(entity);
+                    });
+                }
             }
         }
         
@@ -3492,12 +3454,10 @@ function setupNoaEngine() {
                 // Only kill if player is grounded (not jumping)
                 if (isGrounded) {
                     // Player stepped on electric trap - instant death!
-                    console.log('BZZT! Player stepped on electric trap!');
                     handlePlayerDeath('Electrocuted');
                     break; // Exit loop after death
                 } else {
                     // Player is jumping over the trap - safe!
-                    console.log('Player jumped over electric trap - safe!');
                 }
             }
         }
@@ -3545,7 +3505,7 @@ function setupNoaEngine() {
     }, 5000); // Every 5 seconds*/
     
     // Update coin visibility based on distance and frustum
-    const maxRenderDistance = 64; // Increased to 64 blocks (2 chunks) for much better visibility
+    const maxRenderDistance = 288; // 9 chunks ahead for fast movement (9 * 32 = 288 blocks)
     const maxRenderDistanceSq = maxRenderDistance * maxRenderDistance;
     let visibilityUpdateCounter = 0;
     let lastPlayerChunkKey = null;
@@ -3591,20 +3551,71 @@ function setupNoaEngine() {
                 });
             }
             
-            // Add coins from pre-computed neighbor chunks
-            const neighbors = chunkNeighbors.get(playerChunkKey);
-            if (neighbors) {
-                neighbors.forEach(neighborKey => {
-                    const neighborCoins = coinsByChunk.get(neighborKey);
-                    if (neighborCoins) {
-                        neighborCoins.forEach((entity, coinKey) => {
-                            // Check if entity actually exists
+            // Determine movement direction based on corridor type
+            const blockBelow = noa.world.getBlockID(
+                Math.floor(playerPos[0]), 
+                Math.floor(playerPos[1] - 1), 
+                Math.floor(playerPos[2])
+            );
+            
+            // Add coins from neighbor chunks based on corridor direction
+            if (blockBelow === corridorNorthID) {
+                // Blue corridor - load coins 9 chunks north, none to sides
+                let foundCoinsInChunks = 0;
+                for (let dz = 1; dz <= 9; dz++) {
+                    const northChunkKey = `${playerChunkX},${playerChunkZ + dz}`;
+                    const northChunkCoins = coinsByChunk.get(northChunkKey);
+                    if (northChunkCoins && northChunkCoins.size > 0) {
+                        foundCoinsInChunks++;
+                        northChunkCoins.forEach((entity, coinKey) => {
                             if (noa.entities.hasComponent(entity, noa.entities.names.position)) {
                                 currentVisibleCoins.add(entity);
                             }
                         });
                     }
-                });
+                }
+            } else if (blockBelow === corridorEastID) {
+                // Red corridor - load coins 9 chunks east
+                for (let dx = 1; dx <= 9; dx++) {
+                    const eastChunkKey = `${playerChunkX + dx},${playerChunkZ}`;
+                    const eastChunkCoins = coinsByChunk.get(eastChunkKey);
+                    if (eastChunkCoins) {
+                        eastChunkCoins.forEach((entity, coinKey) => {
+                            if (noa.entities.hasComponent(entity, noa.entities.names.position)) {
+                                currentVisibleCoins.add(entity);
+                            }
+                        });
+                    }
+                }
+            } else if (blockBelow === corridorWestID) {
+                // Yellow corridor - load coins 9 chunks west
+                for (let dx = 1; dx <= 9; dx++) {
+                    const westChunkKey = `${playerChunkX - dx},${playerChunkZ}`;
+                    const westChunkCoins = coinsByChunk.get(westChunkKey);
+                    if (westChunkCoins) {
+                        westChunkCoins.forEach((entity, coinKey) => {
+                            if (noa.entities.hasComponent(entity, noa.entities.names.position)) {
+                                currentVisibleCoins.add(entity);
+                            }
+                        });
+                    }
+                }
+            } else {
+                // In room or other - load coins in all directions (3x3 area)
+                for (let dx = -1; dx <= 1; dx++) {
+                    for (let dz = -1; dz <= 1; dz++) {
+                        if (dx === 0 && dz === 0) continue;
+                        const neighborKey = `${playerChunkX + dx},${playerChunkZ + dz}`;
+                        const neighborCoins = coinsByChunk.get(neighborKey);
+                        if (neighborCoins) {
+                            neighborCoins.forEach((entity, coinKey) => {
+                                if (noa.entities.hasComponent(entity, noa.entities.names.position)) {
+                                    currentVisibleCoins.add(entity);
+                                }
+                            });
+                        }
+                    }
+                }
             }
         }
         
@@ -3615,6 +3626,8 @@ function setupNoaEngine() {
         // Track processing time
         let processedCount = 0;
         let skippedCount = 0;
+        let renderedCount = 0;
+        let tooFarCount = 0;
         const visStartTime = performance.now();
         
         currentVisibleCoins.forEach(entity => {
@@ -3656,16 +3669,23 @@ function setupNoaEngine() {
                     // Always show coins within 20 blocks, otherwise check frustum
                     if (distanceSq <= 400) { // 20*20 = 400
                         meshData.mesh.setEnabled(true);
+                        renderedCount++;
                     } else {
                         // Check if in camera frustum with some leniency
                         const inFrustum = camera.isInFrustum(meshData.mesh);
                         meshData.mesh.setEnabled(inFrustum);
+                        if (inFrustum) renderedCount++;
                     }
                 } else {
                     meshData.mesh.setEnabled(false);
+                    tooFarCount++;
                 }
             }
         });
+        
+        if (visibilityUpdateCounter % 60 === 0) { // Log every second
+            console.log(`Coins - Visible set: ${currentVisibleCoins.size}, Processed: ${processedCount}, Rendered: ${renderedCount}, Too far: ${tooFarCount}, Skipped: ${skippedCount}`);
+        }
         
         // Handle electric trap visibility
         traps.forEach((trapEntity, trapKey) => {
@@ -4325,7 +4345,6 @@ function startPeriodicUpdates() {
         
         // Skip if already updating
         if (isUpdatingPlayerToken) {
-            console.log('Skipping player token update - already in progress');
             return;
         }
         
@@ -4338,7 +4357,6 @@ function startPeriodicUpdates() {
             try {
                 const pending = JSON.parse(existingPendingTx);
                 if (pending.submitted) {
-                    console.log('Already have a submitted pending transaction - skipping update');
                     tokenStatus.pendingTransaction = true;
                     tokenStatus.lastError = 'Transaction pending - waiting for completion';
                     updateTokenStatusDisplay();
@@ -4385,10 +4403,6 @@ function startPeriodicUpdates() {
         if (pendingTxString) {
             try {
                 pendingTx = JSON.parse(pendingTxString);
-                console.log('Found pending transaction:', { 
-                    submitted: pendingTx.submitted, 
-                    timestamp: new Date(pendingTx.timestamp).toISOString() 
-                });
                 
                 // Check if this pending transaction is too old
                 const maxAge = 2 * 60 * 1000; // 2 minutes
@@ -4412,7 +4426,6 @@ function startPeriodicUpdates() {
         
         if (pendingTx && pendingTx.submitted) {
             // We have a submitted transaction - try to recover it
-            console.log('Found submitted transaction - attempting recovery');
             
             try {
                 // Create aggregator client for recovery
@@ -4456,7 +4469,6 @@ function startPeriodicUpdates() {
             }
         } else if (pendingTx && !pendingTx.submitted) {
             // We have a pending transaction that wasn't submitted yet - clear it
-            console.log('Clearing unsubmitted pending transaction');
             localStorage.removeItem(pendingTxKey);
             tokenStatus.pendingTransaction = false;
             updateTokenStatusDisplay();
@@ -4512,7 +4524,6 @@ function startPeriodicUpdates() {
             submitted: false // Track if actually submitted
         };
         localStorage.setItem(pendingTxKey, JSON.stringify(pendingData));
-        console.log('Saved new pending transaction with submitted=false');
         
         // Update status to show pending
         tokenStatus.pendingTransaction = true;
@@ -4533,13 +4544,11 @@ function startPeriodicUpdates() {
                 const pendingDataToUpdate = JSON.parse(savedPendingData);
                 pendingDataToUpdate.submitted = true;
                 localStorage.setItem(pendingTxKey, JSON.stringify(pendingDataToUpdate));
-                console.log('Marked transaction as submitted');
             } else {
                 console.error('WARNING: No pending transaction found to mark as submitted!');
             }
             
             // Wait for inclusion proof using SDK utility
-            console.log('Waiting for inclusion proof...');
             const inclusionProof = await window.UnicitySDK.waitInclusionProof(
                 client,
                 commitment,
