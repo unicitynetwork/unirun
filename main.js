@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00126'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00127'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -2630,7 +2630,8 @@ function setupNoaEngine() {
         
         
         // Queue chunk for tokenization (non-blocking)
-        if (localStorage.getItem('unicityRunner_privateKey')) {
+        // SIMPLIFIED: Only tokenize chunks on the x=0 axis (where the corridor is)
+        if (localStorage.getItem('unicityRunner_privateKey') && chunkX === 0) {
             // Add to queue for async processing
             queueChunkTokenization(chunkX, chunkZ);
         }
