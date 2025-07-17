@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00127'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00128'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -1883,7 +1883,76 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
     }
     
     
-    return { tiles, coinPositions, trapPositions };
+    // Generate holes/carvers in the corridor
+    const carverPositions = [];
+    
+    // Skip carvers in spawn chunk and safe zones for player safety
+    if (chunkX === 0 && chunkZ <= 2) {
+        return { tiles, coinPositions, trapPositions, carverPositions };
+    }
+    
+    // Only generate carvers in corridor chunks
+    if (chunkX === 0) {
+        const carverRng = seededRandom(`${seed}_carvers_${chunkX}_${chunkZ}`);
+        
+        // Calculate carver probability based on distance north
+        // Start at 0.1% at spawn, increase to 10% at z=250 chunks, max 15% at z=375
+        const distanceNorth = Math.max(0, chunkZ);
+        const carverProbability = Math.min(0.15, 0.001 + (0.099 * distanceNorth / 250));
+        
+        // Check each z position for potential carver placement
+        for (let z = 2; z < chunkSize - 2; z++) {
+            // Don't place carvers too close together
+            if (carverRng() < carverProbability) {
+                // Determine carver properties
+                const fromEast = carverRng() < 0.5; // 50% chance from each side
+                const carverWidth = Math.floor(carverRng() * 5) + 1; // 1-5 blocks wide
+                const carverDepth = Math.floor(carverRng() * 3) + 1; // 1-3 blocks deep into corridor
+                
+                // For wide carvers (4-5 blocks), ensure at least one corridor block remains
+                let actualDepth = carverDepth;
+                if (carverWidth >= 4) {
+                    actualDepth = Math.min(carverDepth, 2); // Max 2 blocks deep for wide carvers
+                }
+                
+                // Apply carver to tiles
+                for (let w = 0; w < carverWidth && z + w < chunkSize - 2; w++) {
+                    const carveZ = z + w;
+                    
+                    if (fromEast) {
+                        // Carve from east side (right side when facing north)
+                        for (let d = 0; d < actualDepth; d++) {
+                            const carveX = 16 - d; // Start from x=16 and go west
+                            if (carveX >= 14) { // Don't carve past the corridor
+                                tiles[carveX][carveZ] = 'carved'; // Mark as carved/empty
+                            }
+                        }
+                    } else {
+                        // Carve from west side (left side when facing north)
+                        for (let d = 0; d < actualDepth; d++) {
+                            const carveX = 14 + d; // Start from x=14 and go east
+                            if (carveX <= 16) { // Don't carve past the corridor
+                                tiles[carveX][carveZ] = 'carved'; // Mark as carved/empty
+                            }
+                        }
+                    }
+                }
+                
+                // Record carver position for any special handling
+                carverPositions.push({
+                    z: z,
+                    width: carverWidth,
+                    depth: actualDepth,
+                    fromEast: fromEast
+                });
+                
+                // Skip ahead to avoid overlapping carvers
+                z += carverWidth + 3;
+            }
+        }
+    }
+    
+    return { tiles, coinPositions, trapPositions, carverPositions };
 }
 
 
@@ -2845,13 +2914,27 @@ function setupNoaEngine() {
                             voxelID = corridorNorthID; // Normal corridor floor
                         }
                     }
+                    // Handle carved sections - create holes in the corridor
+                    else if (worldY === 3 && level[i][k] === 'carved') {
+                        voxelID = 0; // Empty space - hole in the corridor
+                    }
                     // Walls alongside raised north corridors at y=4 and y=5
                     else if ((worldY === 4 || worldY === 5)) {
-                        // Check if we're next to a north corridor
-                        if (i === 13 && level[14][k] === 'corridor_north') {
-                            voxelID = dirtID; // West wall of north corridor
-                        } else if (i === 17 && level[16][k] === 'corridor_north') {
-                            voxelID = dirtID; // East wall of north corridor
+                        // Check if we're next to a north corridor or carved section
+                        if (i === 13 && (level[14][k] === 'corridor_north' || level[14][k] === 'carved')) {
+                            // Don't place wall next to carved sections
+                            if (level[14][k] === 'carved') {
+                                voxelID = 0; // No wall next to holes
+                            } else {
+                                voxelID = dirtID; // West wall of north corridor
+                            }
+                        } else if (i === 17 && (level[16][k] === 'corridor_north' || level[16][k] === 'carved')) {
+                            // Don't place wall next to carved sections
+                            if (level[16][k] === 'carved') {
+                                voxelID = 0; // No wall next to holes
+                            } else {
+                                voxelID = dirtID; // East wall of north corridor
+                            }
                         }
                     }
                     
