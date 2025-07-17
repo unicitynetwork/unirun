@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00096'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00097'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -1138,10 +1138,12 @@ async function createNewChunkToken(chunkX, chunkZ) {
                     
                     // Ensure tokenData exists (for old format compatibility)
                     if (!savedData.tokenData) {
+                        console.log(`Adding missing tokenData field for chunk (${chunkX}, ${chunkZ})`);
                         savedData.tokenData = window.UnicitySDK.HexConverter.encode(new Uint8Array(0));
                     }
                     
-                    localStorage.setItem(pendingKey, JSON.stringify(savedData));
+                    // IMPORTANT: Update the mintTx data, not just the pending status!
+                    localStorage.setItem(mintTxKey, JSON.stringify(savedData));
                     
                     // Clear from in-memory tracking to allow retry on next cycle
                     const chunkKey = `${chunkX},${chunkZ}`;
