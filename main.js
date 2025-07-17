@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00116'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00117'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -4167,15 +4167,15 @@ function setupNoaEngine() {
                 
                 // Simple turning logic - NEVER turn south
                 if (noa.inputs.state.right) {
-                    // Turn right (clockwise): N->E, E->nothing, S->W, W->N
+                    // Turn right (clockwise): N->E, E->W, S->W, W->N
                     if (currentDir === 'north') targetDir = 'east';
-                    else if (currentDir === 'east') targetDir = currentDir; // Don't turn south!
+                    else if (currentDir === 'east') targetDir = 'west'; // Skip south, go to west
                     else if (currentDir === 'south') targetDir = 'west';
                     else if (currentDir === 'west') targetDir = 'north';
                 } else if (noa.inputs.state.left) {
-                    // Turn left (counter-clockwise): N->W, W->nothing, S->E, E->N
+                    // Turn left (counter-clockwise): N->W, W->E, S->E, E->N
                     if (currentDir === 'north') targetDir = 'west';
-                    else if (currentDir === 'west') targetDir = currentDir; // Don't turn south!
+                    else if (currentDir === 'west') targetDir = 'east'; // Skip south, go to east
                     else if (currentDir === 'south') targetDir = 'east';
                     else if (currentDir === 'east') targetDir = 'north';
                 }
