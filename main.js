@@ -3307,6 +3307,14 @@ function setupNoaEngine() {
         
         // Clean up completed animations
         coinsToRemove.forEach(entity => flyingCoins.delete(entity));
+        
+        // Update backpack positions - let physics handle the movement
+        backpacks.forEach((backpackEntity, backpackKey) => {
+            if (!noa.entities.hasComponent(backpackEntity, noa.entities.names.position)) {
+                // Backpack entity was deleted, remove from tracking
+                backpacks.delete(backpackKey);
+            }
+        });
     });
     
     // Handle chunk unloading - clean up coins when chunks are removed
@@ -3963,6 +3971,24 @@ function setupNoaEngine() {
         if (visibilityUpdateCounter % 60 === 0) { // Log every second
             console.log(`Coins - Visible set: ${currentVisibleCoins.size}, Processed: ${processedCount}, Rendered: ${renderedCount}, Too far: ${tooFarCount}, Skipped: ${skippedCount}`);
         }
+        
+        // Handle backpack visibility
+        backpacks.forEach((backpackEntity, backpackKey) => {
+            if (noa.entities.hasComponent(backpackEntity, noa.entities.names.mesh)) {
+                const backpackPos = noa.entities.getPosition(backpackEntity);
+                const meshData = noa.entities.getMeshData(backpackEntity);
+                
+                if (meshData && meshData.mesh) {
+                    // Calculate distance to player
+                    const dx = backpackPos[0] - playerPos[0];
+                    const dz = backpackPos[2] - playerPos[2];
+                    const distanceSq = dx * dx + dz * dz;
+                    
+                    // Simple distance check
+                    meshData.mesh.setEnabled(distanceSq <= maxRenderDistanceSq);
+                }
+            }
+        });
         
         // Handle electric trap visibility
         traps.forEach((trapEntity, trapKey) => {
@@ -5317,6 +5343,7 @@ function handlePlayerDeath(reason = 'Unknown') {
     
     // Drop backpack if player had coins and didn't fall into void
     if (totalCoinsLost > 0 && reason !== 'Fell into the void') {
+        console.log(`Dropping backpack with ${totalCoinsLost} coins. Death reason: ${reason}`);
         const playerPos = noa.entities.getPosition(noa.playerEntity);
         const physics = noa.entities.getPhysics(noa.playerEntity);
         
@@ -5325,6 +5352,8 @@ function handlePlayerDeath(reason = 'Unknown') {
         if (physics && physics.body) {
             velocity = [...physics.body.velocity];
         }
+        
+        console.log(`Player position: ${playerPos}, velocity: ${velocity}`);
         
         // Create backpack entity at player's position
         const backpackEntity = noa.entities.add(
@@ -5368,6 +5397,9 @@ function handlePlayerDeath(reason = 'Unknown') {
         
         // Track backpack
         backpacks.set(backpackKey, backpackEntity);
+        console.log(`Backpack created at ${backpackKey}, entity: ${backpackEntity}, mesh available: ${backpackMesh !== null}`);
+    } else {
+        console.log(`No backpack dropped. Coins: ${totalCoinsLost}, Reason: ${reason}`);
     }
     
     // Clear player's coin balance
