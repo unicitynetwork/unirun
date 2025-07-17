@@ -3308,11 +3308,30 @@ function setupNoaEngine() {
         // Clean up completed animations
         coinsToRemove.forEach(entity => flyingCoins.delete(entity));
         
-        // Update backpack positions - let physics handle the movement
+        // Update backpack positions and animation
         backpacks.forEach((backpackEntity, backpackKey) => {
             if (!noa.entities.hasComponent(backpackEntity, noa.entities.names.position)) {
                 // Backpack entity was deleted, remove from tracking
                 backpacks.delete(backpackKey);
+                return;
+            }
+            
+            // Animate backpack - rotate and bob up/down
+            const meshData = noa.entities.getMeshData(backpackEntity);
+            if (meshData && meshData.mesh) {
+                // Rotate slowly
+                meshData.mesh.rotation.y += 0.02;
+                
+                // Bob up and down
+                const time = Date.now() * 0.001;
+                const bobAmount = Math.sin(time * 2) * 0.1;
+                meshData.mesh.position.y = bobAmount;
+                
+                // Pulse the glow
+                const pulse = (Math.sin(time * 3) + 1) * 0.25 + 0.3; // Between 0.3 and 0.8
+                meshData.mesh.material.emissiveColor.r = pulse * 0.8;
+                meshData.mesh.material.emissiveColor.g = pulse * 0.6;
+                meshData.mesh.material.emissiveColor.b = pulse * 0.2;
             }
         });
     });
@@ -3457,18 +3476,18 @@ function setupNoaEngine() {
     // Hide the original trap mesh
     trapMesh.setEnabled(false);
     
-    // Create backpack mesh - a box that looks like a backpack
+    // Create backpack mesh - a larger box for better visibility
     backpackMesh = BABYLON.MeshBuilder.CreateBox('backpack', {
-        width: 0.7,
-        height: 0.8,
-        depth: 0.5
+        width: 1.0,  // Increased from 0.7
+        height: 1.2, // Increased from 0.8
+        depth: 0.8   // Increased from 0.5
     }, noa.rendering.getScene());
     
-    // Backpack material - brown leather-like appearance
+    // Backpack material - glowing golden appearance for visibility
     const backpackMaterial = new BABYLON.StandardMaterial('backpackMaterial', noa.rendering.getScene());
-    backpackMaterial.diffuseColor = new BABYLON.Color3(0.4, 0.2, 0.1); // Brown color
-    backpackMaterial.specularColor = new BABYLON.Color3(0.1, 0.05, 0.02); // Slight leather shine
-    backpackMaterial.emissiveColor = new BABYLON.Color3(0.1, 0.05, 0.02); // Slight glow
+    backpackMaterial.diffuseColor = new BABYLON.Color3(0.8, 0.6, 0.2); // Golden brown color
+    backpackMaterial.specularColor = new BABYLON.Color3(0.8, 0.7, 0.3); // Golden shine
+    backpackMaterial.emissiveColor = new BABYLON.Color3(0.5, 0.4, 0.1); // Strong golden glow
     backpackMaterial.freeze(); // Freeze material to improve performance
     backpackMesh.material = backpackMaterial;
     
@@ -5363,11 +5382,20 @@ function handlePlayerDeath(reason = 'Unknown') {
             playerPos[2] - northOffset // Negative Z is north
         ];
         
+        // Check what blocks are at the spawn position
+        const checkY = Math.floor(backpackSpawnPos[1]);
+        const blockAtSpawn = noa.world.getBlockID(
+            Math.floor(backpackSpawnPos[0]),
+            checkY - 1,
+            Math.floor(backpackSpawnPos[2])
+        );
+        console.log(`Backpack spawn check - Block at spawn position (y=${checkY-1}): ${blockAtSpawn}, spawn pos: ${backpackSpawnPos}`);
+        
         // Create backpack entity at offset position
         const backpackEntity = noa.entities.add(
             backpackSpawnPos,
-            0.7, // width
-            0.8, // height
+            1.0, // width - increased for visibility
+            1.2, // height - increased for visibility
             null, // mesh (will be added later)
             [0, 0, 0], // meshOffset
             true, // doPhysics - enable physics for backpack
@@ -5392,7 +5420,7 @@ function handlePlayerDeath(reason = 'Unknown') {
         backpackInstance.setEnabled(true);
         noa.entities.addComponent(backpackEntity, noa.entities.names.mesh, {
             mesh: backpackInstance,
-            offset: [0, 0.4, 0] // Center the mesh
+            offset: [0, 0.6, 0] // Center the larger mesh
         });
         
         // Add backpack component
