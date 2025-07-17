@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00115'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00116'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -387,7 +387,7 @@ function calculateInitialSpawnPoint(seed) {
     const rng = seededRandom(seed + '_spawn');
     // Generate level pattern for chunk -1,0 (one chunk west)
     const chunkSize = 32;
-    const spawnChunkX = -1; // One chunk west
+    const spawnChunkX = 0; // Spawn at origin chunk
     const spawnChunkZ = 0;
     const levelData = generateLevelForChunk(spawnChunkX, spawnChunkZ, seed);
     const level = levelData.tiles;
