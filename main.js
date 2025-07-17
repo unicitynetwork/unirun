@@ -5441,9 +5441,21 @@ function handlePlayerDeath(reason = 'Unknown') {
         );
         console.log(`Backpack spawn check - Block at spawn position (y=${checkY-1}): ${blockAtSpawn}, spawn pos: ${backpackSpawnPos}`);
         
+        // Check if we have solid ground at spawn position
+        const groundCheck = noa.world.getBlockID(
+            Math.floor(backpackSpawnPos[0]),
+            Math.floor(backpackSpawnPos[1]) - 1,
+            Math.floor(backpackSpawnPos[2])
+        );
+        
+        console.log(`Backpack spawn ground check: block at Y-1 = ${groundCheck}`);
+        
+        // Always use the calculated spawn position
+        let finalSpawnPos = backpackSpawnPos;
+        
         // Create backpack entity at offset position
         const backpackEntity = noa.entities.add(
-            backpackSpawnPos,
+            finalSpawnPos,
             1.0, // width - increased for visibility
             1.2, // height - increased for visibility
             null, // mesh (will be added later)
@@ -5451,6 +5463,11 @@ function handlePlayerDeath(reason = 'Unknown') {
             true, // doPhysics - enable physics for backpack
             false  // shadow
         );
+        
+        if (!backpackEntity) {
+            console.error(`Failed to create backpack entity at position ${backpackSpawnPos}`);
+            return;
+        }
         
         // Add physics to make it fall and slide
         const backpackPhysics = noa.entities.getPhysics(backpackEntity);
@@ -5474,9 +5491,9 @@ function handlePlayerDeath(reason = 'Unknown') {
         });
         
         // Add backpack component
-        const backpackKey = `${Math.floor(backpackSpawnPos[0])},${Math.floor(backpackSpawnPos[2])}`;
+        const backpackKey = `${Math.floor(finalSpawnPos[0])},${Math.floor(finalSpawnPos[2])}`;
         noa.entities.addComponent(backpackEntity, 'isBackpack', {
-            position: backpackSpawnPos,
+            position: finalSpawnPos,
             lostCoins: totalCoinsLost,
             backpackKey: backpackKey
         });
