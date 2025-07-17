@@ -38,37 +38,45 @@
             font-weight: bold;
             text-align: center;
         }
-        #tokenStatus {
+        #tokenStatusOverlay {
             position: absolute;
             top: 10px;
             left: 50%;
             transform: translateX(-50%);
             z-index: 10;
-            padding: 10px 20px;
-            font-family: sans-serif;
             background: rgba(0, 0, 0, 0.5);
             color: white;
             border-radius: 5px;
             border: 2px solid #444;
-            min-width: 300px;
+            display: flex;
+            gap: 20px;
+            padding: 10px;
+        }
+        .status-section {
+            padding: 10px 20px;
+            min-width: 250px;
             text-align: center;
             font-size: 14px;
         }
-        #tokenStatus .status-title {
+        .status-section:not(:last-child) {
+            border-right: 1px solid #555;
+        }
+        .status-title {
             font-weight: bold;
             margin-bottom: 5px;
             color: #88ccff;
         }
-        #tokenStatus .status-line {
+        .status-line {
             margin: 3px 0;
+            font-family: sans-serif;
         }
-        #tokenStatus .pending {
+        .pending {
             color: #ffaa33;
         }
-        #tokenStatus .success {
+        .success {
             color: #33ff88;
         }
-        #tokenStatus .error {
+        .error {
             color: #ff5555;
         }
         #coinDisplay {
@@ -95,10 +103,18 @@
 <body>
     <div id="app"></div>
     <button id="resetPlayer">Reset Player</button>
-    <div id="tokenStatus">
-        <div class="status-title">Token Status</div>
-        <div id="tokenStatusContent">
-            <div class="status-line">Initializing...</div>
+    <div id="tokenStatusOverlay">
+        <div class="status-section">
+            <div class="status-title">Token Status</div>
+            <div id="tokenStatusContent">
+                <div class="status-line">Initializing...</div>
+            </div>
+        </div>
+        <div class="status-section" id="chunkStatusSection" style="display: none;">
+            <div class="status-title">Chunk Tokenization</div>
+            <div id="chunkStatusContent">
+                <div class="status-line">No active tasks</div>
+            </div>
         </div>
     </div>
     <div id="coinDisplay">

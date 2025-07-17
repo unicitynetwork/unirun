@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00097'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00098'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -63,32 +63,44 @@ function updateCoinDisplay() {
 // Update token status display
 function updateTokenStatusDisplay() {
     const statusContent = document.getElementById('tokenStatusContent');
+    const chunkStatusContent = document.getElementById('chunkStatusContent');
+    const chunkStatusSection = document.getElementById('chunkStatusSection');
+    
     if (!statusContent) return;
     
-    let html = '';
+    // Update main token status
+    let tokenHtml = '';
     
     if (!tokenStatus.initialized) {
-        html = '<div class="status-line">Initializing...</div>';
+        tokenHtml = '<div class="status-line">Initializing...</div>';
     } else {
-        html += `<div class="status-line">Submissions: <span class="success">${tokenStatus.successfulSubmissions}</span> / ${tokenStatus.totalSubmissions}</div>`;
+        tokenHtml += `<div class="status-line">Submissions: <span class="success">${tokenStatus.successfulSubmissions}</span> / ${tokenStatus.totalSubmissions}</div>`;
         
         if (tokenStatus.pendingTransaction) {
-            html += '<div class="status-line pending">⏳ Pending transaction...</div>';
+            tokenHtml += '<div class="status-line pending">⏳ Pending transaction...</div>';
         } else if (tokenStatus.lastUpdateTime) {
             const secondsAgo = Math.floor((Date.now() - tokenStatus.lastUpdateTime) / 1000);
-            html += `<div class="status-line">Last update: ${secondsAgo}s ago</div>`;
+            tokenHtml += `<div class="status-line">Last update: ${secondsAgo}s ago</div>`;
         }
         
         if (tokenStatus.lastError) {
-            html += `<div class="status-line error">⚠️ ${tokenStatus.lastError}</div>`;
+            tokenHtml += `<div class="status-line error">⚠️ ${tokenStatus.lastError}</div>`;
         }
+    }
+    
+    statusContent.innerHTML = tokenHtml;
+    
+    // Update chunk tokenization status
+    if (chunkStatusContent && chunkStatusSection) {
+        const hasChunkActivity = chunkTokenizationQueue.length > 0 || queueStatus.activeTasks > 0 || queueStatus.totalProcessed > 0;
         
-        // Add chunk tokenization queue status
-        if (chunkTokenizationQueue.length > 0 || queueStatus.activeTasks > 0 || queueStatus.totalProcessed > 0) {
-            html += '<div class="status-line" style="margin-top: 10px; border-top: 1px solid #555; padding-top: 5px;">Chunk Tokenization:</div>';
+        if (hasChunkActivity) {
+            chunkStatusSection.style.display = 'block';
+            
+            let chunkHtml = '';
             
             if (queueStatus.activeTasks > 0) {
-                html += `<div class="status-line pending">Active: ${queueStatus.activeTasks}/${MAX_CONCURRENT_TASKS}</div>`;
+                chunkHtml += `<div class="status-line pending">Active: ${queueStatus.activeTasks}/${MAX_CONCURRENT_TASKS}</div>`;
                 
                 // Show first few active chunks
                 if (queueStatus.currentlyProcessing.length > 0) {
@@ -96,29 +108,35 @@ function updateTokenStatusDisplay() {
                     const chunks = queueStatus.currentlyProcessing.slice(0, displayCount).join(', ');
                     const moreCount = queueStatus.currentlyProcessing.length - displayCount;
                     const moreText = moreCount > 0 ? ` +${moreCount} more` : '';
-                    html += `<div class="status-line" style="font-size: 10px;">Processing: ${chunks}${moreText}</div>`;
+                    chunkHtml += `<div class="status-line" style="font-size: 10px;">Processing: ${chunks}${moreText}</div>`;
                 }
             }
             
             if (chunkTokenizationQueue.length > 0) {
-                html += `<div class="status-line">Queue: ${chunkTokenizationQueue.length} chunks</div>`;
+                chunkHtml += `<div class="status-line">Queue: ${chunkTokenizationQueue.length} chunks</div>`;
             }
             
             if (queueStatus.totalProcessed > 0) {
-                html += `<div class="status-line success">Completed: ${queueStatus.totalProcessed}</div>`;
+                chunkHtml += `<div class="status-line success">Completed: ${queueStatus.totalProcessed}</div>`;
             }
             
             if (queueStatus.totalFailed > 0) {
-                html += `<div class="status-line error">Failed: ${queueStatus.totalFailed}</div>`;
+                chunkHtml += `<div class="status-line error">Failed: ${queueStatus.totalFailed}</div>`;
             }
             
             if (queueStatus.lastError) {
-                html += `<div class="status-line error" style="font-size: 10px;">⚠️ ${queueStatus.lastError}</div>`;
+                chunkHtml += `<div class="status-line error" style="font-size: 10px;">⚠️ ${queueStatus.lastError}</div>`;
             }
+            
+            if (chunkHtml === '') {
+                chunkHtml = '<div class="status-line">No active tasks</div>';
+            }
+            
+            chunkStatusContent.innerHTML = chunkHtml;
+        } else {
+            chunkStatusSection.style.display = 'none';
         }
     }
-    
-    statusContent.innerHTML = html;
 }
 
 // Track all pending mint transactions
