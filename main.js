@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00098'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00099'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -15,6 +15,8 @@ let signingService;
 // Track chunks being tokenized to prevent concurrent processing
 const chunksBeingTokenized = new Map(); // key: "x,z", value: Promise
 const generatedCoins = new Set(); // Track all coin positions ever generated: "worldX,worldZ"
+const generatedTraps = new Set(); // Track all trap positions ever generated: "worldX,worldZ"
+let traps = new Map(); // Track all traps in the world: key = "x,z", value = entity
 
 // Block IDs (will be set during engine setup)
 let roomFloorID;
@@ -1771,7 +1773,32 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
         }
     }
     
-    return { tiles, coinPositions };
+    // Generate electric traps in blue (north) corridors
+    const trapPositions = [];
+    const trapRng = seededRandom(`${seed}_traps_${chunkX}_${chunkZ}`);
+    
+    // Create a set of coin positions for quick lookup
+    const coinPosSet = new Set(coinPositions.map(pos => `${pos.x},${pos.z}`));
+    
+    // Check each position in north corridors for trap placement
+    for (let z = 0; z < chunkSize; z++) {
+        for (let x = 14; x <= 16; x++) {
+            if (tiles[x][z] === 'corridor_north') {
+                // 15% chance for a trap at this position
+                if (trapRng() < 0.15) {
+                    const posKey = `${x},${z}`;
+                    // Only place trap if there's no coin at this position
+                    if (!coinPosSet.has(posKey)) {
+                        trapPositions.push({ x, z });
+                        // Skip ahead to ensure traps are spaced out
+                        x += 2;
+                    }
+                }
+            }
+        }
+    }
+    
+    return { tiles, coinPositions, trapPositions };
 }
 
 
@@ -2507,6 +2534,7 @@ function setupNoaEngine() {
         const levelData = generateLevelForChunk(chunkX, chunkZ, WORLD_SEED);
         const level = levelData.tiles;
         const coinPositions = levelData.coinPositions;
+        const trapPositions = levelData.trapPositions || [];
         
         // Fill the chunk
         for (var i = 0; i < chunkSize; i++) {
@@ -2910,6 +2938,51 @@ function setupNoaEngine() {
             }
         });
         
+        // Create electric trap entities for this chunk
+        trapPositions.forEach(trapPos => {
+            const worldX = x + trapPos.x;
+            const worldZ = z + trapPos.z;
+            const worldY = 3.1; // Slightly above the blue corridor floor (y=3)
+            
+            const trapKey = `${worldX},${worldZ}`;
+            
+            // Check if we've ever generated a trap at this position
+            if (generatedTraps.has(trapKey)) {
+                return; // Skip - trap was already generated here
+            }
+            
+            // Mark this position as having a trap generated
+            generatedTraps.add(trapKey);
+            
+            // Check if trap entity already exists at this position
+            if (!traps.has(trapKey)) {
+                // Create electric trap entity
+                const trapEntity = noa.entities.add(
+                    [worldX + 0.5, worldY, worldZ + 0.5], // position (centered on block)
+                    0.8, // width (slightly smaller than full block)
+                    0.1, // height (thin, like a floor panel)
+                    null, // mesh (will be added later)
+                    [0, 0, 0], // meshOffset
+                    false, // doPhysics - no physics for traps
+                    false  // shadow
+                );
+                
+                // Add custom trap component for tracking
+                noa.entities.addComponent(trapEntity, 'isElectricTrap', {
+                    position: [worldX, worldY, worldZ],
+                    trapKey: trapKey
+                });
+                
+                // Create mesh data for lazy loading
+                noa.entities.addComponent(trapEntity, 'pendingTrapMesh', {
+                    meshName: 'trap_' + trapKey,
+                    needsMesh: true
+                });
+                
+                // Track trap globally
+                traps.set(trapKey, trapEntity);
+            }
+        });
         
         // tell noa the chunk's terrain data is now set
         noa.world.setChunkData(id, data);
@@ -2980,6 +3053,31 @@ function setupNoaEngine() {
             // Note: We intentionally don't remove coins from generatedCoins Set
             // This ensures coins are never duplicated even if chunks are reloaded
         }
+        
+        // Remove all traps from this chunk
+        const trapsToRemove = [];
+        traps.forEach((entity, trapKey) => {
+            const [trapX, trapZ] = trapKey.split(',').map(Number);
+            const trapChunkX = Math.floor(trapX / 32);
+            const trapChunkZ = Math.floor(trapZ / 32);
+            
+            if (trapChunkX === chunkX && trapChunkZ === chunkZ) {
+                // Remove entity if it exists
+                if (noa.entities.hasComponent(entity, noa.entities.names.mesh)) {
+                    // Dispose of the Babylon.js mesh instance first
+                    const meshData = noa.entities.getMeshData(entity);
+                    if (meshData && meshData.mesh) {
+                        meshData.mesh.dispose();
+                    }
+                    noa.ents.deleteEntity(entity);
+                }
+                trapsToRemove.push(trapKey);
+            }
+        });
+        
+        // Remove traps from tracking
+        trapsToRemove.forEach(key => traps.delete(key));
+        // Note: We don't remove from generatedTraps to prevent duplication
     });
     
     
@@ -2996,6 +3094,24 @@ function setupNoaEngine() {
     // Register pending mesh component for lazy mesh creation
     noa.ents.createComponent({
         name: 'pendingMesh',
+        state: {
+            meshName: '',
+            needsMesh: true
+        }
+    });
+    
+    // Register electric trap component
+    noa.ents.createComponent({
+        name: 'isElectricTrap',
+        state: {
+            position: null,
+            trapKey: null
+        }
+    });
+    
+    // Register pending trap mesh component
+    noa.ents.createComponent({
+        name: 'pendingTrapMesh',
         state: {
             meshName: '',
             needsMesh: true
@@ -3019,6 +3135,24 @@ function setupNoaEngine() {
     
     // Hide the original mesh
     coinMesh.setEnabled(false);
+    
+    // Create electric trap mesh - a flat panel with electric effect
+    const trapMesh = BABYLON.MeshBuilder.CreateBox('electricTrap', {
+        width: 0.9,
+        height: 0.05, // Very thin, like a floor panel
+        depth: 0.9
+    }, noa.rendering.getScene());
+    
+    // Electric trap material - dangerous looking with animation
+    const trapMaterial = new BABYLON.StandardMaterial('trapMaterial', noa.rendering.getScene());
+    trapMaterial.diffuseColor = new BABYLON.Color3(0.1, 0.1, 0.2); // Dark blue-black base
+    trapMaterial.emissiveColor = new BABYLON.Color3(0.3, 0.5, 1.0); // Electric blue glow
+    trapMaterial.specularColor = new BABYLON.Color3(0.5, 0.7, 1.0); // Bright blue specular
+    trapMaterial.freeze(); // Freeze material to improve performance
+    trapMesh.material = trapMaterial;
+    
+    // Hide the original trap mesh
+    trapMesh.setEnabled(false);
     
     // Track coins that are flying up after collection
     const flyingCoins = new Map(); // key: entity, value: { startY, startTime }
@@ -3182,6 +3316,34 @@ function setupNoaEngine() {
         
     }, 100); // Check every 100ms (reduced from 50ms)
     
+    // Electric trap collision detection
+    setInterval(() => {
+        if (!noa || !noa.playerEntity) return;
+        
+        const playerPos = noa.entities.getPosition(noa.playerEntity);
+        const playerFeetY = playerPos[1] - 0.9; // Player feet position (player is ~1.8 blocks tall)
+        
+        // Check each trap for collision
+        for (const [trapKey, trapEntity] of traps) {
+            if (!noa.entities.hasComponent(trapEntity, noa.entities.names.position)) continue;
+            
+            const trapPos = noa.entities.getPosition(trapEntity);
+            
+            // Check if player is standing on the trap
+            const dx = Math.abs(playerPos[0] - trapPos[0]);
+            const dy = Math.abs(playerFeetY - trapPos[1]);
+            const dz = Math.abs(playerPos[2] - trapPos[2]);
+            
+            // Check collision (player width is ~0.6, trap width is 0.9)
+            if (dx < 0.75 && dy < 0.2 && dz < 0.75) {
+                // Player stepped on electric trap - instant death!
+                console.log('BZZT! Player stepped on electric trap!');
+                handlePlayerDeath();
+                break; // Exit loop after death
+            }
+        }
+    }, 50); // Check 20 times per second for responsive collision
+    
     // Moved outside of worldDataNeeded - see line after world generation setup
     
     // Cleanup non-existent coins periodically - only check nearby chunks
@@ -3342,6 +3504,55 @@ function setupNoaEngine() {
                     }
                 } else {
                     meshData.mesh.setEnabled(false);
+                }
+            }
+        });
+        
+        // Handle electric trap visibility
+        traps.forEach((trapEntity, trapKey) => {
+            // Check if entity needs a mesh created
+            if (noa.entities.hasComponent(trapEntity, 'pendingTrapMesh')) {
+                const pendingData = noa.entities.getState(trapEntity, 'pendingTrapMesh');
+                if (pendingData.needsMesh) {
+                    // Check distance to player before creating mesh
+                    const trapPos = noa.entities.getPosition(trapEntity);
+                    const dx = trapPos[0] - playerPos[0];
+                    const dz = trapPos[2] - playerPos[2];
+                    const distanceSq = dx * dx + dz * dz;
+                    
+                    // Only create mesh if within reasonable distance
+                    if (distanceSq <= maxRenderDistanceSq) {
+                        // Create mesh on demand
+                        const trapInstance = trapMesh.createInstance(pendingData.meshName);
+                        trapInstance.setEnabled(true);
+                        noa.entities.addComponent(trapEntity, noa.entities.names.mesh, {
+                            mesh: trapInstance,
+                            offset: [0, 0, 0]
+                        });
+                        // Remove pending mesh component
+                        noa.entities.removeComponent(trapEntity, 'pendingTrapMesh');
+                    }
+                }
+            }
+            
+            // Update visibility for traps with meshes
+            if (noa.entities.hasComponent(trapEntity, noa.entities.names.mesh)) {
+                const trapPos = noa.entities.getPosition(trapEntity);
+                const meshData = noa.entities.getMeshData(trapEntity);
+                
+                if (meshData && meshData.mesh) {
+                    // Calculate distance to player
+                    const dx = trapPos[0] - playerPos[0];
+                    const dz = trapPos[2] - playerPos[2];
+                    const distanceSq = dx * dx + dz * dz;
+                    
+                    // Simple distance check
+                    meshData.mesh.setEnabled(distanceSq <= maxRenderDistanceSq);
+                    
+                    // Animate trap with electric pulse effect
+                    const time = Date.now() * 0.001;
+                    const pulse = Math.sin(time * 3) * 0.5 + 0.5; // Oscillate between 0 and 1
+                    meshData.mesh.material.emissiveColor.b = 0.5 + pulse * 0.5; // Pulse blue channel
                 }
             }
         });
