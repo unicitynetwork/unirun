@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00123'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00124'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -3778,15 +3778,18 @@ function setupNoaEngine() {
             let normalizedHeading = currentHeading % (2 * Math.PI);
             if (normalizedHeading < 0) normalizedHeading += 2 * Math.PI;
             
-            // Snap to nearest cardinal direction
-            if (normalizedHeading < Math.PI * 0.25 || normalizedHeading >= Math.PI * 1.75) {
-                targetHeading = 0; // North
-            } else if (normalizedHeading >= Math.PI * 0.25 && normalizedHeading < Math.PI * 0.75) {
-                targetHeading = Math.PI / 2; // East
-            } else if (normalizedHeading >= Math.PI * 0.75 && normalizedHeading < Math.PI * 1.25) {
-                targetHeading = Math.PI; // South
+            // Snap to nearest cardinal direction (excluding south)
+            // Divide the circle into three equal parts for N, E, W
+            // North: 330° to 30° (300° to 60°)
+            // East: 30° to 150°
+            // West: 150° to 330° (210° to 300°)
+            
+            if (normalizedHeading < Math.PI / 6 || normalizedHeading >= Math.PI * 11 / 6) {
+                targetHeading = 0; // North (330° to 30°)
+            } else if (normalizedHeading >= Math.PI / 6 && normalizedHeading < Math.PI * 5 / 6) {
+                targetHeading = Math.PI / 2; // East (30° to 150°)
             } else {
-                targetHeading = -Math.PI / 2; // West
+                targetHeading = -Math.PI / 2; // West (150° to 330°)
             }
             
             // Only snap if we're close enough (within 5 degrees)
@@ -4044,10 +4047,14 @@ function setupNoaEngine() {
             noa.camera.heading = targetHeading;
             noa._isTurning = false;
         } else {
-            // Rotate towards target
-            const rotationStep = diff > 0 ? turnSpeed : -turnSpeed;
+            // Rotate towards target using the shortest path
+            const rotationStep = Math.sign(diff) * turnSpeed;
             movement.heading += rotationStep;
             noa.camera.heading += rotationStep;
+            
+            // Normalize heading to prevent accumulation errors
+            movement.heading = movement.heading % (2 * Math.PI);
+            noa.camera.heading = noa.camera.heading % (2 * Math.PI);
         }
     }, 50); // Run frequently for smooth rotation
     
