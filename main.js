@@ -400,7 +400,10 @@ function calculateInitialSpawnPoint(seed) {
     // Blue corridor is at x=14-16, spawn in the middle (x=15)
     const worldX = (spawnChunkX * chunkSize) + 15 + 0.5;
     const worldZ = (spawnChunkZ * chunkSize) + 16; // Middle of chunk
-    return [worldX, 6, worldZ]; // Spawn at y=6 (above the raised corridor at y=3)
+    const spawnPos = [worldX, 6, worldZ]; // Spawn at y=6 (above the raised corridor at y=3)
+    
+    console.log(`Calculated spawn position: ${spawnPos}, expected corridor at x=14-16`);
+    return spawnPos;
 }
 
 // RNG functions for room and exit determination
@@ -2715,7 +2718,7 @@ function setupNoaEngine() {
     // If no saved position or invalid position, we need to find a spawn room
     // But we'll do this after chunks are generated
     if (!position || position[1] < -10) {
-        position = [-16, 50, 16]; // High up to prevent getting stuck, one chunk west
+        position = [15.5, 50, 16]; // High up to prevent getting stuck, center of blue corridor
         
         // After chunks generate, find proper spawn
         setTimeout(() => {
@@ -5631,7 +5634,19 @@ function respawnPlayer() {
     
     // Find spawn position
     const spawnPos = calculateInitialSpawnPoint(WORLD_SEED);
+    console.log(`Respawning player at: ${spawnPos}`);
     noa.entities.setPosition(noa.playerEntity, spawnPos);
+    
+    // Check what's at spawn position after setting
+    setTimeout(() => {
+        const actualPos = noa.entities.getPosition(noa.playerEntity);
+        const blockBelow = noa.world.getBlockID(
+            Math.floor(actualPos[0]), 
+            Math.floor(actualPos[1] - 1), 
+            Math.floor(actualPos[2])
+        );
+        console.log(`Player actual position after respawn: ${actualPos}, block below: ${blockBelow} (5=blue corridor)`);
+    }, 100);
     
     // Reset distance tracking
     playerStartZ = spawnPos[2];
