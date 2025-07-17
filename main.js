@@ -2628,6 +2628,18 @@ function setupNoaEngine() {
     if (playerMovement) {
         playerMovement.maxSpeed *= 2; // 2x the max speed
         playerMovement.moveSpeed *= 2; // 2x the move speed
+        
+        // Modify jump to last 3x longer but stay under 0.9 blocks height
+        // Default jump impulse gives ~1.5 blocks height, so we need to reduce it
+        // To get 0.9 blocks max height, we need about 60% of default impulse
+        playerMovement.jumpImpulse *= 0.6; // Reduce initial jump force
+        
+        // Reduce gravity to make the jump last 3x longer
+        // Less gravity = slower fall = longer airtime
+        playerMovement.gravity *= 0.33; // 1/3 of normal gravity
+        
+        // Also reduce air drag to maintain horizontal momentum during long jumps
+        playerMovement.airDrag *= 0.5; // Half the air resistance
     }
     
     // Drone will be created after player spawn is finalized
@@ -3445,13 +3457,25 @@ function setupNoaEngine() {
         const playerPos = noa.entities.getPosition(noa.playerEntity);
         const playerFeetY = playerPos[1] - 0.9; // Player feet position (player is ~1.8 blocks tall)
         
+        // Get player physics to check if grounded
+        const physics = noa.entities.getPhysics(noa.playerEntity);
+        const movement = noa.entities.getMovement(noa.playerEntity);
+        
+        // Check if player is on ground (not jumping)
+        // Player is considered grounded if:
+        // 1. Y velocity is very small (not moving up/down significantly)
+        // 2. Player is at or very close to floor level (y ~= 3)
+        const isGrounded = physics && physics.body && 
+                          Math.abs(physics.body.velocity[1]) < 0.1 && 
+                          playerFeetY < 3.5;
+        
         // Check each trap for collision
         for (const [trapKey, trapEntity] of traps) {
             if (!noa.entities.hasComponent(trapEntity, noa.entities.names.position)) continue;
             
             const trapPos = noa.entities.getPosition(trapEntity);
             
-            // Check if player is standing on the trap
+            // Check if player is above the trap
             const dx = Math.abs(playerPos[0] - trapPos[0]);
             const dy = Math.abs(playerFeetY - trapPos[1]);
             const dz = Math.abs(playerPos[2] - trapPos[2]);
@@ -3459,10 +3483,16 @@ function setupNoaEngine() {
             // Check collision (player width is ~0.6, trap width is 0.9)
             // Trap is at y=4, player runs on floor at y=3, so check if player is close to trap height
             if (dx < 0.75 && dy < 1.2 && dz < 0.75) {
-                // Player stepped on electric trap - instant death!
-                console.log('BZZT! Player stepped on electric trap!');
-                handlePlayerDeath('Electrocuted');
-                break; // Exit loop after death
+                // Only kill if player is grounded (not jumping)
+                if (isGrounded) {
+                    // Player stepped on electric trap - instant death!
+                    console.log('BZZT! Player stepped on electric trap!');
+                    handlePlayerDeath('Electrocuted');
+                    break; // Exit loop after death
+                } else {
+                    // Player is jumping over the trap - safe!
+                    console.log('Player jumped over electric trap - safe!');
+                }
             }
         }
     }, 50); // Check 20 times per second for responsive collision
