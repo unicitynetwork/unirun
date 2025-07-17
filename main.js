@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00099'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00109'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -32,6 +32,8 @@ let coins = new Map(); // Track all coins in the world: key = "x,z", value = ent
 let coinsByChunk = new Map(); // Track coins organized by chunk: key = "chunkX,chunkZ", value = Map of coins
 let chunkNeighbors = new Map(); // Pre-computed neighbor chunks: key = "chunkX,chunkZ", value = Set of neighbor chunk keys
 let playerCoins = 0; // Player's coin balance (temporary counter)
+let isPlayerDead = false; // Track if player is dead
+let deathReason = ''; // Track how the player died
 
 // Coin inventory tracking
 let confirmedURCBalance = 0; // Confirmed balance from minted tokens
@@ -417,9 +419,9 @@ function roomExists(x, z, seed) {
 }
 
 function getRoomDimensions(x, z, seed) {
-    const rng = seededRandom(seed + '_roomdim_' + x + '_' + z);
-    const width = Math.floor(rng() * 9) + 7; // 7-15 blocks
-    const length = Math.floor(rng() * 9) + 7; // 7-15 blocks
+    // Fixed room size for all rooms
+    const width = 7; // Fixed 7 blocks wide
+    const length = 7; // Fixed 7 blocks long
     return { width, length };
 }
 
@@ -1736,6 +1738,41 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
     const coinPositions = [];
     const rng = seededRandom(`${seed}_coins_${chunkX}_${chunkZ}`);
     
+    // Determine safe zones around rooms (5 blocks before and after to include stairs)
+    const roomSafeZones = new Set();
+    
+    // Check for rooms in this chunk and neighboring chunks
+    for (let dx = -1; dx <= 1; dx++) {
+        for (let dz = -1; dz <= 1; dz++) {
+            const checkChunkX = chunkX + dx;
+            const checkChunkZ = chunkZ + dz;
+            
+            if (roomExists(checkChunkX, checkChunkZ, seed)) {
+                const { width, length } = getRoomDimensions(checkChunkX, checkChunkZ, seed);
+                // Room position within its chunk
+                const roomXInChunk = Math.floor((chunkSize - width) / 2);
+                const roomZInChunk = Math.floor((chunkSize - length) / 2);
+                
+                // Room position in world coordinates
+                const roomWorldX = checkChunkX * chunkSize + roomXInChunk;
+                const roomWorldZ = checkChunkZ * chunkSize + roomZInChunk;
+                
+                // Mark safe zones (4 blocks around room boundaries to cover stairs)
+                // Stairs are placed 0-1 blocks from room edge, so 4 blocks gives extra safety
+                // With fixed 7x7 rooms, this creates a reasonable safe zone
+                for (let worldZ = roomWorldZ - 4; worldZ < roomWorldZ + length + 4; worldZ++) {
+                    const localZ = worldZ - (chunkZ * chunkSize);
+                    if (localZ >= 0 && localZ < chunkSize) {
+                        // Only mark north corridor lanes (x=14,15,16)
+                        for (let x = 14; x <= 16; x++) {
+                            roomSafeZones.add(`${x},${localZ}`);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
     // Check each row in the chunk for north corridors
     for (let z = 0; z < chunkSize; z++) {
         // Check if this row has a continuous north corridor
@@ -1748,8 +1785,17 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
         }
         
         if (hasNorthCorridor && z >= 5 && z < chunkSize - 5) {
-            // Decide if this row should have coins (50% chance)
-            if (rng() < 0.5) {
+            // Check if we're in a safe zone
+            let inSafeZone = false;
+            for (let x = 14; x <= 16; x++) {
+                if (roomSafeZones.has(`${x},${z}`)) {
+                    inSafeZone = true;
+                    break;
+                }
+            }
+            
+            // Only place coins if not in safe zone
+            if (!inSafeZone && rng() < 0.5) {
                 // Determine coin cluster length (1-10)
                 const clusterLength = Math.floor(rng() * 10) + 1;
                 
@@ -1775,21 +1821,61 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
     
     // Generate electric traps in blue (north) corridors
     const trapPositions = [];
+    
+    // Skip traps in the initial chunk (0,0) for player safety
+    if (chunkX === 0 && chunkZ === 0) {
+        console.log(`Chunk (${chunkX}, ${chunkZ}): Skipping traps in initial chunk`);
+        return { tiles, coinPositions, trapPositions };
+    }
+    
+    // Check if this chunk has a room - if so, no traps!
+    const chunkHasRoom = roomExists(chunkX, chunkZ, seed);
+    if (chunkHasRoom) {
+        console.log(`Chunk (${chunkX}, ${chunkZ}): Has room, skipping trap generation`);
+        return { tiles, coinPositions, trapPositions };
+    }
+    
+    // Check if this chunk has any north corridors
+    let hasNorthCorridor = false;
+    for (let z = 0; z < chunkSize; z++) {
+        for (let x = 14; x <= 16; x++) {
+            if (tiles[x][z] === 'corridor_north') {
+                hasNorthCorridor = true;
+                break;
+            }
+        }
+        if (hasNorthCorridor) break;
+    }
+    
+    // Only generate traps if we have north corridors but no room
+    if (!hasNorthCorridor) {
+        console.log(`Chunk (${chunkX}, ${chunkZ}): No north corridors, skipping trap generation`);
+        return { tiles, coinPositions, trapPositions };
+    }
+    
+    console.log(`Chunk (${chunkX}, ${chunkZ}): Has north corridor but no room - generating traps`);
     const trapRng = seededRandom(`${seed}_traps_${chunkX}_${chunkZ}`);
     
     // Create a set of coin positions for quick lookup
     const coinPosSet = new Set(coinPositions.map(pos => `${pos.x},${pos.z}`));
     
     // Check each position in north corridors for trap placement
+    let corridorCount = 0;
+    let coinBlockedCount = 0;
+    
     for (let z = 0; z < chunkSize; z++) {
         for (let x = 14; x <= 16; x++) {
             if (tiles[x][z] === 'corridor_north') {
-                // 15% chance for a trap at this position
-                if (trapRng() < 0.15) {
-                    const posKey = `${x},${z}`;
-                    // Only place trap if there's no coin at this position
-                    if (!coinPosSet.has(posKey)) {
+                corridorCount++;
+                const posKey = `${x},${z}`;
+                // Skip if has a coin
+                if (coinPosSet.has(posKey)) {
+                    coinBlockedCount++;
+                } else {
+                    // 15% chance for a trap at this position
+                    if (trapRng() < 0.15) {
                         trapPositions.push({ x, z });
+                        console.log(`Trap placed at (${x}, ${z}) in chunk (${chunkX}, ${chunkZ})`);
                         // Skip ahead to ensure traps are spaced out
                         x += 2;
                     }
@@ -1797,6 +1883,8 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
             }
         }
     }
+    
+    console.log(`Chunk (${chunkX}, ${chunkZ}): ${corridorCount} corridor positions, ${coinBlockedCount} have coins, ${trapPositions.length} traps generated`);
     
     return { tiles, coinPositions, trapPositions };
 }
@@ -2299,9 +2387,9 @@ function updateHealthDisplay(health, maxHealth = 100) {
 }
 
 // Damage player (for testing or future gameplay)
-function damagePlayer(amount) {
+function damagePlayer(amount, source = 'Unknown') {
     // Don't damage if already dead
-    if (currentPlayerHealth <= 0) {
+    if (currentPlayerHealth <= 0 || isPlayerDead) {
         return;
     }
     
@@ -2311,7 +2399,7 @@ function damagePlayer(amount) {
     
     // Check for death
     if (currentPlayerHealth <= 0) {
-        handlePlayerDeath();
+        handlePlayerDeath(source);
     }
 }
 
@@ -2939,10 +3027,13 @@ function setupNoaEngine() {
         });
         
         // Create electric trap entities for this chunk
+        if (trapPositions.length > 0) {
+            console.log(`Creating ${trapPositions.length} trap entities for chunk at (${x}, ${z})`);
+        }
         trapPositions.forEach(trapPos => {
             const worldX = x + trapPos.x;
             const worldZ = z + trapPos.z;
-            const worldY = 3.1; // Slightly above the blue corridor floor (y=3)
+            const worldY = 4; // On top of the blue corridor floor (y=3)
             
             const trapKey = `${worldX},${worldZ}`;
             
@@ -3139,7 +3230,7 @@ function setupNoaEngine() {
     // Create electric trap mesh - a flat panel with electric effect
     const trapMesh = BABYLON.MeshBuilder.CreateBox('electricTrap', {
         width: 0.9,
-        height: 0.05, // Very thin, like a floor panel
+        height: 0.15, // Thicker to ensure visibility above floor
         depth: 0.9
     }, noa.rendering.getScene());
     
@@ -3335,10 +3426,11 @@ function setupNoaEngine() {
             const dz = Math.abs(playerPos[2] - trapPos[2]);
             
             // Check collision (player width is ~0.6, trap width is 0.9)
-            if (dx < 0.75 && dy < 0.2 && dz < 0.75) {
+            // Trap is at y=4, player runs on floor at y=3, so check if player is close to trap height
+            if (dx < 0.75 && dy < 1.2 && dz < 0.75) {
                 // Player stepped on electric trap - instant death!
                 console.log('BZZT! Player stepped on electric trap!');
-                handlePlayerDeath();
+                handlePlayerDeath('Electrocuted');
                 break; // Exit loop after death
             }
         }
@@ -3679,7 +3771,7 @@ function setupNoaEngine() {
     
     // Handle continuous auto-strafing towards exit
     setInterval(() => {
-        if (!noa || !noa.playerEntity) return;
+        if (!noa || !noa.playerEntity || isPlayerDead) return;
         
         // Don't strafe while turning
         if (noa._isTurning) return;
@@ -3826,7 +3918,7 @@ function setupNoaEngine() {
     
     // Handle smooth turning
     setInterval(() => {
-        if (!noa || !noa.playerEntity || !noa._isTurning) return;
+        if (!noa || !noa.playerEntity || !noa._isTurning || isPlayerDead) return;
         
         const movement = noa.entities.getMovement(noa.playerEntity);
         if (!movement) return;
@@ -3887,6 +3979,16 @@ function setupNoaEngine() {
         const movement = noa.entities.getMovement(noa.playerEntity);
         if (!movement) return;
         
+        // Stop all movement if player is dead
+        if (isPlayerDead) {
+            movement.running = false;
+            noa.inputs.state.forward = false;
+            noa.inputs.state.backward = false;
+            noa.inputs.state.left = false;
+            noa.inputs.state.right = false;
+            noa.inputs.state.jump = false;
+            return;
+        }
         
         // Always run forward at 2x speed
         movement.running = true;
@@ -4163,6 +4265,26 @@ function startPeriodicUpdates() {
         
         isUpdatingPlayerToken = true;
         
+        // First check if we already have a pending transaction
+        const pendingTxKey = 'unicityRunner_pendingTransaction';
+        const existingPendingTx = localStorage.getItem(pendingTxKey);
+        if (existingPendingTx) {
+            try {
+                const pending = JSON.parse(existingPendingTx);
+                if (pending.submitted) {
+                    console.log('Already have a submitted pending transaction - skipping update');
+                    tokenStatus.pendingTransaction = true;
+                    tokenStatus.lastError = 'Transaction pending - waiting for completion';
+                    updateTokenStatusDisplay();
+                    isUpdatingPlayerToken = false;
+                    return;
+                }
+            } catch (e) {
+                console.error('Failed to parse existing pending transaction:', e);
+                localStorage.removeItem(pendingTxKey);
+            }
+        }
+        
         // Ensure signing service is in sync with current token's predicate nonce
         // This is crucial for creating valid commitments after token updates
         const privateKeyBytes = window.UnicitySDK.HexConverter.decode(localStorage.getItem('unicityRunner_privateKey'));
@@ -4192,7 +4314,6 @@ function startPeriodicUpdates() {
         const client = new window.UnicitySDK.StateTransitionClient(aggregatorClient);
         
         // Check if we have a pending transaction from a previous attempt
-        const pendingTxKey = 'unicityRunner_pendingTransaction';
         let pendingTx = null;
         const pendingTxString = localStorage.getItem(pendingTxKey);
         if (pendingTxString) {
@@ -4443,7 +4564,10 @@ function startPeriodicUpdates() {
             // Reset update flag on error
             isUpdatingPlayerToken = false;
             
-            throw error;
+            // Don't re-throw REQUEST_ID_EXISTS errors - they're handled above
+            if (!error.message || !error.message.includes('REQUEST_ID_EXISTS')) {
+                throw error;
+            }
         } finally {
             // Ensure flag is always reset
             isUpdatingPlayerToken = false;
@@ -4694,7 +4818,7 @@ setInterval(() => {
         const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
         
         if (distance < 1) { // Hit player
-            damagePlayer(5);
+            damagePlayer(5, 'Killed by drone');
             noa.entities.deleteEntity(proj.entity);
             return false;
         }
@@ -4746,7 +4870,58 @@ setInterval(() => {
 }, 16); // Check 60 times per second for fast bullets
 
 // Handle player death
-function handlePlayerDeath() {
+function handlePlayerDeath(reason = 'Unknown') {
+    if (isPlayerDead) return; // Already dead
+    
+    isPlayerDead = true;
+    deathReason = reason;
+    
+    // Show death screen
+    const deathScreen = document.getElementById('deathScreen');
+    const deathReasonElement = document.getElementById('deathReason');
+    
+    if (deathScreen) {
+        deathScreen.classList.add('show');
+    }
+    
+    if (deathReasonElement) {
+        deathReasonElement.textContent = reason;
+    }
+    
+    // Stop player movement
+    if (noa && noa.playerEntity) {
+        const movement = noa.entities.getMovement(noa.playerEntity);
+        if (movement) {
+            movement.running = false;
+        }
+        // Disable all input
+        noa.inputs.state.forward = false;
+        noa.inputs.state.backward = false;
+        noa.inputs.state.left = false;
+        noa.inputs.state.right = false;
+        noa.inputs.state.jump = false;
+    }
+    
+    // Listen for space key to respawn
+    const respawnHandler = (e) => {
+        if (e.code === 'Space' && isPlayerDead) {
+            e.preventDefault();
+            document.removeEventListener('keydown', respawnHandler);
+            respawnPlayer();
+        }
+    };
+    document.addEventListener('keydown', respawnHandler);
+}
+
+// Respawn player after death
+function respawnPlayer() {
+    isPlayerDead = false;
+    
+    // Hide death screen
+    const deathScreen = document.getElementById('deathScreen');
+    if (deathScreen) {
+        deathScreen.classList.remove('show');
+    }
     
     // Reset health
     currentPlayerHealth = 100;
