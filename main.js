@@ -3390,6 +3390,30 @@ function setupNoaEngine() {
         // Remove traps from tracking
         trapsToRemove.forEach(key => traps.delete(key));
         // Note: We don't remove from generatedTraps to prevent duplication
+        
+        // Remove all backpacks from this chunk
+        const backpacksToRemove = [];
+        backpacks.forEach((entity, backpackKey) => {
+            const [backpackX, backpackZ] = backpackKey.split(',').map(Number);
+            const backpackChunkX = Math.floor(backpackX / 32);
+            const backpackChunkZ = Math.floor(backpackZ / 32);
+            
+            if (backpackChunkX === chunkX && backpackChunkZ === chunkZ) {
+                // Remove entity if it exists
+                if (noa.entities.hasComponent(entity, noa.entities.names.mesh)) {
+                    // Dispose of the Babylon.js mesh instance first
+                    const meshData = noa.entities.getMeshData(entity);
+                    if (meshData && meshData.mesh) {
+                        meshData.mesh.dispose();
+                    }
+                    noa.ents.deleteEntity(entity);
+                }
+                backpacksToRemove.push(backpackKey);
+            }
+        });
+        
+        // Remove backpacks from tracking
+        backpacksToRemove.forEach(key => backpacks.delete(key));
     });
     
     
@@ -3680,12 +3704,12 @@ function setupNoaEngine() {
             const dy = backpackPos[1] - playerPos[1];
             const dz = backpackPos[2] - playerPos[2];
             
-            // Check if player is close enough (within 1.5 blocks)
+            // Check if player is close enough (within 2 blocks for larger backpack)
             const distanceSq = dx * dx + dy * dy + dz * dz;
-            if (distanceSq < 2.25) { // 1.5 * 1.5
+            if (distanceSq < 4.0) { // 2.0 * 2.0
                 // Collect backpack
                 const backpackData = noa.entities.getState(backpackEntity, 'isBackpack');
-                if (backpackData && backpackData.lostCoins > 0) {
+                if (backpackData) {
                     // Restore coins to player
                     pendingURCBalance += backpackData.lostCoins;
                     playerCoins += backpackData.lostCoins;
@@ -3693,19 +3717,27 @@ function setupNoaEngine() {
                     
                     console.log(`Collected backpack with ${backpackData.lostCoins} URC!`);
                     
-                    // Remove backpack
-                    const meshData = noa.entities.getMeshData(backpackEntity);
-                    if (meshData && meshData.mesh) {
-                        meshData.mesh.dispose();
+                    // Remove backpack mesh and entity
+                    try {
+                        const meshData = noa.entities.getMeshData(backpackEntity);
+                        if (meshData && meshData.mesh) {
+                            meshData.mesh.dispose();
+                        }
+                        noa.entities.deleteEntity(backpackEntity);
+                    } catch (e) {
+                        console.error('Error deleting backpack entity:', e);
                     }
-                    noa.ents.deleteEntity(backpackEntity);
+                    
                     backpacksToRemove.push(backpackKey);
                 }
             }
         });
         
-        // Clean up collected backpacks
-        backpacksToRemove.forEach(key => backpacks.delete(key));
+        // Clean up collected backpacks from tracking
+        backpacksToRemove.forEach(key => {
+            backpacks.delete(key);
+            console.log(`Removed backpack ${key} from tracking`);
+        });
     }, 100); // Check every 100ms
     
     // Update total distance traveled periodically
