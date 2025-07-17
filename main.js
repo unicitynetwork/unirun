@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00114'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00115'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -421,7 +421,7 @@ function calculateInitialSpawnPoint(seed) {
 // RNG functions for room and exit determination
 function roomExists(x, z, seed) {
     const rng = seededRandom(seed + '_room_' + x + '_' + z);
-    const result = rng() < 0.1; // 10% chance of room (4 times scarcer)
+    const result = rng() < 0.2; // 20% chance of room (doubled from 10%)
     return result;
 }
 
