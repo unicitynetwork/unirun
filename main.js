@@ -3687,6 +3687,12 @@ function setupNoaEngine() {
         
         const currentPos = noa.entities.getPosition(noa.playerEntity);
         totalDistanceTraveled = Math.abs(currentPos[2] - playerStartZ);
+        
+        // Update distance display
+        const distanceValue = document.querySelector('#distanceDisplay .distance-value');
+        if (distanceValue) {
+            distanceValue.textContent = `${Math.floor(totalDistanceTraveled)} blocks`;
+        }
     }, 1000); // Update every second
     
     // Electric trap collision detection

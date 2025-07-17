@@ -98,6 +98,31 @@
         #coinDisplay div {
             margin: 2px 0;
         }
+        #distanceDisplay {
+            position: absolute;
+            top: 80px;
+            right: 20px;
+            z-index: 10;
+            padding: 10px 15px;
+            font-family: sans-serif;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            border-radius: 5px;
+            border: 2px solid #444;
+            font-size: 14px;
+            font-weight: bold;
+            min-width: 150px;
+            text-align: center;
+        }
+        #distanceDisplay .distance-label {
+            color: #88ccff;
+            font-size: 12px;
+            margin-bottom: 2px;
+        }
+        #distanceDisplay .distance-value {
+            color: #ffffff;
+            font-size: 18px;
+        }
         #deathScreen {
             position: fixed;
             top: 0;
@@ -167,6 +192,10 @@
     <div id="coinDisplay">
         <div style="color: #33ff88;">Confirmed: 0 URC</div>
         <div style="color: #ffcc00;">Pending: 0 URC</div>
+    </div>
+    <div id="distanceDisplay">
+        <div class="distance-label">Distance</div>
+        <div class="distance-value">0 blocks</div>
     </div>
     <div id="healthDisplay">
         <div id="healthText">Health: 100/100</div>
