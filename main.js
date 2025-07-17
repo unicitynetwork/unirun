@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00125'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00126'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -1614,12 +1614,16 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
         
     } else {
         // SIMPLIFIED: Just generate infinite blue corridor
-        // Generate north-bound corridor through entire chunk (3 blocks wide)
-        for (let z = 0; z < chunkSize; z++) {
-            for (let x = 14; x <= 16; x++) {
-                tiles[x][z] = 'corridor_north';
+        // Only generate corridor in the center column of chunks (chunkX = 0)
+        if (chunkX === 0) {
+            // Generate north-bound corridor through entire chunk (3 blocks wide)
+            for (let z = 0; z < chunkSize; z++) {
+                for (let x = 14; x <= 16; x++) {
+                    tiles[x][z] = 'corridor_north';
+                }
             }
         }
+        // All other chunks remain empty (just walls)
         
         /* COMMENTED OUT ORIGINAL CORRIDOR LOGIC
         // No room in this chunk - check for corridors from the closest room in each direction
