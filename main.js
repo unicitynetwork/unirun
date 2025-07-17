@@ -39,6 +39,7 @@ let playerCoins = 0; // Player's coin balance (temporary counter)
 let isPlayerDead = false; // Track if player is dead
 let deathReason = ''; // Track how the player died
 let backpacks = new Map(); // Track all backpacks in the world: key = "x,z", value = entity
+let backpackData = new Map(); // Persistent backpack data: key = "x,z", value = {position, lostCoins, etc}
 let totalDistanceTraveled = 0; // Track total distance traveled north
 let playerStartZ = null; // Track initial Z position
 
@@ -3269,6 +3270,58 @@ function setupNoaEngine() {
             }
         });
         
+        // Check for backpacks that should be spawned in this chunk
+        const backpacksToSpawn = [];
+        backpackData.forEach((data, backpackKey) => {
+            const [backpackX, backpackZ] = backpackKey.split(',').map(Number);
+            const backpackChunkX = Math.floor(backpackX / 32);
+            const backpackChunkZ = Math.floor(backpackZ / 32);
+            
+            if (backpackChunkX === chunkX && backpackChunkZ === chunkZ) {
+                // This backpack belongs in this chunk
+                if (!backpacks.has(backpackKey)) {
+                    // Backpack entity doesn't exist, create it
+                    backpacksToSpawn.push({ key: backpackKey, data: data });
+                }
+            }
+        });
+        
+        // Spawn backpacks after chunk is set
+        backpacksToSpawn.forEach(({ key, data }) => {
+            console.log(`Recreating backpack at ${key} in newly loaded chunk`);
+            
+            // Create backpack entity
+            const backpackEntity = noa.entities.add(
+                data.position,
+                1.0, // width
+                1.2, // height
+                null, // mesh will be added later
+                [0, 0, 0], // meshOffset
+                false, // no physics for recreated backpacks (they already settled)
+                false  // shadow
+            );
+            
+            if (backpackEntity) {
+                // Create mesh immediately
+                const backpackInstance = backpackMesh.createInstance('backpack_recreated_' + key);
+                backpackInstance.setEnabled(true);
+                noa.entities.addComponent(backpackEntity, noa.entities.names.mesh, {
+                    mesh: backpackInstance,
+                    offset: [0, 0.6, 0]
+                });
+                
+                // Add backpack component
+                noa.entities.addComponent(backpackEntity, 'isBackpack', {
+                    position: data.position,
+                    lostCoins: data.lostCoins,
+                    backpackKey: key
+                });
+                
+                // Track the entity
+                backpacks.set(key, backpackEntity);
+            }
+        });
+        
         // tell noa the chunk's terrain data is now set
         noa.world.setChunkData(id, data);
     });
@@ -3412,8 +3465,11 @@ function setupNoaEngine() {
             }
         });
         
-        // Remove backpacks from tracking
-        backpacksToRemove.forEach(key => backpacks.delete(key));
+        // Remove backpacks from entity tracking only (keep persistent data)
+        backpacksToRemove.forEach(key => {
+            backpacks.delete(key);
+            // Note: We intentionally keep backpackData so backpacks can be recreated
+        });
     });
     
     
@@ -3736,6 +3792,7 @@ function setupNoaEngine() {
         // Clean up collected backpacks from tracking
         backpacksToRemove.forEach(key => {
             backpacks.delete(key);
+            backpackData.delete(key); // Remove from persistent data
             console.log(`Removed backpack ${key} from tracking`);
         });
     }, 100); // Check every 100ms
@@ -5498,8 +5555,13 @@ function handlePlayerDeath(reason = 'Unknown') {
             backpackKey: backpackKey
         });
         
-        // Track backpack
+        // Track backpack entity and persistent data
         backpacks.set(backpackKey, backpackEntity);
+        backpackData.set(backpackKey, {
+            position: finalSpawnPos,
+            lostCoins: totalCoinsLost,
+            createdAt: Date.now()
+        });
         console.log(`Backpack created at ${backpackKey} (${northOffset.toFixed(1)} blocks north), entity: ${backpackEntity}, mesh available: ${backpackMesh !== null}`);
     } else {
         console.log(`No backpack dropped. Coins: ${totalCoinsLost}, Reason: ${reason}`);
