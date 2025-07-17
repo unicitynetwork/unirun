@@ -5429,7 +5429,7 @@ function handlePlayerDeath(reason = 'Unknown') {
         const backpackSpawnPos = [
             playerPos[0],
             playerPos[1] + 1.5, // Higher spawn to avoid getting stuck in floor
-            playerPos[2] - northOffset // Negative Z is north
+            playerPos[2] + northOffset // Positive Z is north
         ];
         
         // Check what blocks are at the spawn position
