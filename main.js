@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00113'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00114'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -4706,7 +4706,7 @@ function createDrone(spawnNearPlayer = true) {
 // Drone AI behavior
 function startDroneAI() {
     let lastFireTime = 0;
-    const fireRate = 1000; // Fire every 1 second
+    const fireRate = 250; // Fire every 0.25 seconds (4x faster)
     const shootingRange = 20; // Shooting range in blocks
     const pursuitAltitude = { min: 10, max: 15 }; // High altitude during pursuit
     const combatAltitude = 8; // Lower altitude during combat
@@ -4742,11 +4742,11 @@ function startDroneAI() {
             const dirX = dx * horizDir;
             const dirZ = dz * horizDir;
             
-            // Set drone velocity with faster pursuit speed
-            const pursuitSpeed = 15; // Much faster when pursuing
+            // Set drone velocity to match player's 4x speed
+            const pursuitSpeed = 32; // Match player's 4x movement speed
             
             // Apply forces instead of setting velocity directly
-            const forceMult = 20; // Increased force multiplier
+            const forceMult = 40; // Doubled force multiplier for 4x speed
             physics.body.applyForce([dirX * pursuitSpeed * forceMult, 0, dirZ * pursuitSpeed * forceMult]);
             
             // Also set velocity directly as backup
@@ -4779,15 +4779,15 @@ function startDroneAI() {
             const hoverDz = targetZ - dronePos[2];
             
             // Set drone velocity for hovering
-            const hoverSpeed = 6; // Faster combat movement
+            const hoverSpeed = 16; // Match player's movement speed in combat
             
             // Apply forces for smoother movement
-            physics.body.applyForce([hoverDx * 10, hoverDy * 15, hoverDz * 10]);
+            physics.body.applyForce([hoverDx * 20, hoverDy * 30, hoverDz * 20]);
             
             // Also set velocity directly
-            physics.body.velocity[0] = hoverDx * 1.0; // Faster hovering
-            physics.body.velocity[1] = hoverDy * 1.5; // Quick altitude adjustment
-            physics.body.velocity[2] = hoverDz * 1.0;
+            physics.body.velocity[0] = hoverDx * 2.0; // 2x faster hovering
+            physics.body.velocity[1] = hoverDy * 3.0; // 2x faster altitude adjustment
+            physics.body.velocity[2] = hoverDz * 2.0;
             
             // Fire projectile if cooldown passed
             const currentTime = Date.now();
