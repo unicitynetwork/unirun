@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00124'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00125'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -384,38 +384,15 @@ function seededRandom(seed) {
 
 // Calculate initial spawn point deterministically
 function calculateInitialSpawnPoint(seed) {
-    const rng = seededRandom(seed + '_spawn');
-    // Generate level pattern for chunk -1,0 (one chunk west)
+    // SIMPLIFIED: Always spawn in the center of the blue corridor
     const chunkSize = 32;
     const spawnChunkX = 0; // Spawn at origin chunk
     const spawnChunkZ = 0;
-    const levelData = generateLevelForChunk(spawnChunkX, spawnChunkZ, seed);
-    const level = levelData.tiles;
     
-    // Find the first open space near the center
-    const centerX = Math.floor(chunkSize / 2);
-    const centerZ = Math.floor(chunkSize / 2);
-    
-    // Spiral search from center to find open space
-    for (let radius = 0; radius < chunkSize / 2; radius++) {
-        for (let dx = -radius; dx <= radius; dx++) {
-            for (let dz = -radius; dz <= radius; dz++) {
-                const x = centerX + dx;
-                const z = centerZ + dz;
-                if (x >= 0 && x < chunkSize && z >= 0 && z < chunkSize && level[x][z] !== 'wall') {
-                    // Adjust world position to account for chunk offset
-                    const worldX = (spawnChunkX * chunkSize) + x + 0.5;
-                    const worldZ = (spawnChunkZ * chunkSize) + z + 0.5;
-                    return [worldX, 6, worldZ]; // Center of the block, 6 blocks above ground
-                }
-            }
-        }
-    }
-    
-    // Fallback to center if no open space found
-    const worldX = (spawnChunkX * chunkSize) + centerX + 0.5;
-    const worldZ = (spawnChunkZ * chunkSize) + centerZ + 0.5;
-    return [worldX, 6, worldZ];
+    // Blue corridor is at x=14-16, spawn in the middle (x=15)
+    const worldX = (spawnChunkX * chunkSize) + 15 + 0.5;
+    const worldZ = (spawnChunkZ * chunkSize) + 16; // Middle of chunk
+    return [worldX, 6, worldZ]; // Spawn at y=6 (above the raised corridor at y=3)
 }
 
 // RNG functions for room and exit determination
@@ -1531,10 +1508,16 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
     const chunkSize = 32; // Match noa chunk size
     const tiles = Array(chunkSize).fill(null).map(() => Array(chunkSize).fill('wall'));
     
+    // SIMPLIFIED: Only generate infinite blue corridor
+    // Comment out room generation for now
+    /*
     // Check if this chunk should have a room
     const hasRoom = roomExists(chunkX, chunkZ, seed);
     
-    if (hasRoom) {
+    if (hasRoom) {*/
+    const hasRoom = false; // Force no rooms
+    
+    if (false) { // Never execute room generation
         // Generate room
         const { width, length } = getRoomDimensions(chunkX, chunkZ, seed);
         const roomX = Math.floor((chunkSize - width) / 2);
@@ -1630,6 +1613,15 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
         }
         
     } else {
+        // SIMPLIFIED: Just generate infinite blue corridor
+        // Generate north-bound corridor through entire chunk (3 blocks wide)
+        for (let z = 0; z < chunkSize; z++) {
+            for (let x = 14; x <= 16; x++) {
+                tiles[x][z] = 'corridor_north';
+            }
+        }
+        
+        /* COMMENTED OUT ORIGINAL CORRIDOR LOGIC
         // No room in this chunk - check for corridors from the closest room in each direction
         // Check East (from the closest room to the west)
         for (let checkX = chunkX - 1; checkX >= chunkX - 200; checkX--) {
@@ -1726,6 +1718,7 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
                 break; // Stop at first room found
             }
         }
+        */ // END OF COMMENTED OUT CORRIDOR LOGIC
     }
     
     // Generate coins in blue (north) corridors
