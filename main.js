@@ -25,6 +25,9 @@ let corridorNorthID;
 let corridorWestID;
 let slowingFloorID;
 
+// Mesh references (will be set during engine setup)
+let backpackMesh = null;
+
 // Game entities
 let droneEntity = null;
 let projectiles = [];
@@ -35,6 +38,9 @@ let chunkNeighbors = new Map(); // Pre-computed neighbor chunks: key = "chunkX,c
 let playerCoins = 0; // Player's coin balance (temporary counter)
 let isPlayerDead = false; // Track if player is dead
 let deathReason = ''; // Track how the player died
+let backpacks = new Map(); // Track all backpacks in the world: key = "x,z", value = entity
+let totalDistanceTraveled = 0; // Track total distance traveled north
+let playerStartZ = null; // Track initial Z position
 
 // Coin inventory tracking
 let confirmedURCBalance = 0; // Confirmed balance from minted tokens
@@ -2747,6 +2753,11 @@ function setupNoaEngine() {
     
     noa.entities.setPosition(noa.playerEntity, position);
     
+    // Initialize starting position for distance tracking
+    if (playerStartZ === null) {
+        playerStartZ = position[2];
+    }
+    
     // Add a red cylinder mesh to the player
     const scene = noa.rendering.getScene();
     
@@ -3392,6 +3403,16 @@ function setupNoaEngine() {
         }
     });
     
+    // Register backpack component
+    noa.ents.createComponent({
+        name: 'isBackpack',
+        state: {
+            position: null,
+            lostCoins: 0,
+            backpackKey: null
+        }
+    });
+    
     // Create coin mesh with lower tessellation for better performance
     const coinMesh = BABYLON.MeshBuilder.CreateCylinder('coin', {
         diameter: 0.5,
@@ -3427,6 +3448,24 @@ function setupNoaEngine() {
     
     // Hide the original trap mesh
     trapMesh.setEnabled(false);
+    
+    // Create backpack mesh - a box that looks like a backpack
+    backpackMesh = BABYLON.MeshBuilder.CreateBox('backpack', {
+        width: 0.7,
+        height: 0.8,
+        depth: 0.5
+    }, noa.rendering.getScene());
+    
+    // Backpack material - brown leather-like appearance
+    const backpackMaterial = new BABYLON.StandardMaterial('backpackMaterial', noa.rendering.getScene());
+    backpackMaterial.diffuseColor = new BABYLON.Color3(0.4, 0.2, 0.1); // Brown color
+    backpackMaterial.specularColor = new BABYLON.Color3(0.1, 0.05, 0.02); // Slight leather shine
+    backpackMaterial.emissiveColor = new BABYLON.Color3(0.1, 0.05, 0.02); // Slight glow
+    backpackMaterial.freeze(); // Freeze material to improve performance
+    backpackMesh.material = backpackMaterial;
+    
+    // Hide the original backpack mesh
+    backpackMesh.setEnabled(false);
     
     // Track coins that are flying up after collection
     const flyingCoins = new Map(); // key: entity, value: { startY, startTime }
@@ -3591,6 +3630,64 @@ function setupNoaEngine() {
         }
         
     }, 50); // Check every 50ms (doubled frequency for faster player)
+    
+    // Backpack collection check
+    setInterval(() => {
+        if (!noa || !noa.playerEntity || isPlayerDead) return;
+        
+        const playerPos = noa.entities.getPosition(noa.playerEntity);
+        
+        // Check all backpacks for collection
+        const backpacksToRemove = [];
+        backpacks.forEach((backpackEntity, backpackKey) => {
+            // Check if entity still exists
+            if (!noa.entities.hasComponent(backpackEntity, noa.entities.names.position)) {
+                backpacksToRemove.push(backpackKey);
+                return;
+            }
+            
+            const backpackPos = noa.entities.getPosition(backpackEntity);
+            
+            // Calculate distance between player and backpack
+            const dx = backpackPos[0] - playerPos[0];
+            const dy = backpackPos[1] - playerPos[1];
+            const dz = backpackPos[2] - playerPos[2];
+            
+            // Check if player is close enough (within 1.5 blocks)
+            const distanceSq = dx * dx + dy * dy + dz * dz;
+            if (distanceSq < 2.25) { // 1.5 * 1.5
+                // Collect backpack
+                const backpackData = noa.entities.getState(backpackEntity, 'isBackpack');
+                if (backpackData && backpackData.lostCoins > 0) {
+                    // Restore coins to player
+                    pendingURCBalance += backpackData.lostCoins;
+                    playerCoins += backpackData.lostCoins;
+                    updateCoinDisplay();
+                    
+                    console.log(`Collected backpack with ${backpackData.lostCoins} URC!`);
+                    
+                    // Remove backpack
+                    const meshData = noa.entities.getMeshData(backpackEntity);
+                    if (meshData && meshData.mesh) {
+                        meshData.mesh.dispose();
+                    }
+                    noa.ents.deleteEntity(backpackEntity);
+                    backpacksToRemove.push(backpackKey);
+                }
+            }
+        });
+        
+        // Clean up collected backpacks
+        backpacksToRemove.forEach(key => backpacks.delete(key));
+    }, 100); // Check every 100ms
+    
+    // Update total distance traveled periodically
+    setInterval(() => {
+        if (!noa || !noa.playerEntity || isPlayerDead || playerStartZ === null) return;
+        
+        const currentPos = noa.entities.getPosition(noa.playerEntity);
+        totalDistanceTraveled = Math.abs(currentPos[2] - playerStartZ);
+    }, 1000); // Update every second
     
     // Electric trap collision detection
     setInterval(() => {
@@ -5205,7 +5302,75 @@ function handlePlayerDeath(reason = 'Unknown') {
     isPlayerDead = true;
     deathReason = reason;
     
-    // Show death screen
+    // Calculate distance traveled
+    const currentPos = noa.entities.getPosition(noa.playerEntity);
+    totalDistanceTraveled = Math.abs(currentPos[2] - playerStartZ);
+    
+    // Get total coins lost (confirmed + pending)
+    const totalCoinsLost = confirmedURCBalance + pendingURCBalance;
+    
+    // Drop backpack if player had coins and didn't fall into void
+    if (totalCoinsLost > 0 && reason !== 'Fell into the void') {
+        const playerPos = noa.entities.getPosition(noa.playerEntity);
+        const physics = noa.entities.getPhysics(noa.playerEntity);
+        
+        // Get player's velocity for inertia
+        let velocity = [0, 0, 0];
+        if (physics && physics.body) {
+            velocity = [...physics.body.velocity];
+        }
+        
+        // Create backpack entity at player's position
+        const backpackEntity = noa.entities.add(
+            [playerPos[0], playerPos[1] + 0.5, playerPos[2]], // position (slightly above player)
+            0.7, // width
+            0.8, // height
+            null, // mesh (will be added later)
+            [0, 0, 0], // meshOffset
+            true, // doPhysics - enable physics for backpack
+            false  // shadow
+        );
+        
+        // Add physics to make it fall and slide
+        const backpackPhysics = noa.entities.getPhysics(backpackEntity);
+        if (backpackPhysics && backpackPhysics.body) {
+            // Apply player's velocity plus a small upward boost
+            backpackPhysics.body.velocity[0] = velocity[0] * 0.8; // Slight reduction for realism
+            backpackPhysics.body.velocity[1] = Math.max(velocity[1], 2); // Small upward boost
+            backpackPhysics.body.velocity[2] = velocity[2] * 0.8;
+            
+            // Set friction to allow sliding
+            backpackPhysics.body.friction = 0.4;
+            backpackPhysics.body.restitution = 0.2; // Small bounce
+        }
+        
+        // Create mesh immediately
+        const backpackInstance = backpackMesh.createInstance('backpack_' + Date.now());
+        backpackInstance.setEnabled(true);
+        noa.entities.addComponent(backpackEntity, noa.entities.names.mesh, {
+            mesh: backpackInstance,
+            offset: [0, 0.4, 0] // Center the mesh
+        });
+        
+        // Add backpack component
+        const backpackKey = `${Math.floor(playerPos[0])},${Math.floor(playerPos[2])}`;
+        noa.entities.addComponent(backpackEntity, 'isBackpack', {
+            position: [playerPos[0], playerPos[1], playerPos[2]],
+            lostCoins: totalCoinsLost,
+            backpackKey: backpackKey
+        });
+        
+        // Track backpack
+        backpacks.set(backpackKey, backpackEntity);
+    }
+    
+    // Clear player's coin balance
+    confirmedURCBalance = 0;
+    pendingURCBalance = 0;
+    playerCoins = 0;
+    updateCoinDisplay();
+    
+    // Show death screen with stats
     const deathScreen = document.getElementById('deathScreen');
     const deathReasonElement = document.getElementById('deathReason');
     
@@ -5214,7 +5379,12 @@ function handlePlayerDeath(reason = 'Unknown') {
     }
     
     if (deathReasonElement) {
-        deathReasonElement.textContent = reason;
+        let deathText = reason;
+        if (totalCoinsLost > 0) {
+            deathText += ` • Lost ${totalCoinsLost} URC`;
+        }
+        deathText += ` • Distance: ${Math.floor(totalDistanceTraveled)} blocks`;
+        deathReasonElement.textContent = deathText;
     }
     
     // Stop player movement
@@ -5259,6 +5429,10 @@ function respawnPlayer() {
     // Find spawn position
     const spawnPos = calculateInitialSpawnPoint(WORLD_SEED);
     noa.entities.setPosition(noa.playerEntity, spawnPos);
+    
+    // Reset distance tracking
+    playerStartZ = spawnPos[2];
+    totalDistanceTraveled = 0;
     
     // Respawn drone at a distance
     if (droneEntity && noa.entities.hasComponent(droneEntity, noa.entities.names.position)) {
