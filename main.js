@@ -23,6 +23,7 @@ let roomFloorID;
 let corridorEastID;
 let corridorNorthID;
 let corridorWestID;
+let slowingFloorID;
 
 // Game entities
 let droneEntity = null;
@@ -1952,7 +1953,106 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
         }
     }
     
-    return { tiles, coinPositions, trapPositions, carverPositions };
+    // Generate slowing floor patches in the corridor
+    const slowingFloorPositions = [];
+    
+    // Skip slowing floors in spawn chunk and safe zones
+    if (chunkX === 0 && chunkZ <= 2) {
+        return { tiles, coinPositions, trapPositions, carverPositions, slowingFloorPositions };
+    }
+    
+    // Only generate slowing floors in corridor chunks
+    if (chunkX === 0) {
+        const slowingRng = seededRandom(`${seed}_slowing_${chunkX}_${chunkZ}`);
+        
+        // Calculate slowing floor probability based on distance north
+        // Start at 0.1% at spawn, increase to 12% at z=250 chunks, max 18% at z=375
+        const distanceNorth = Math.max(0, chunkZ);
+        const slowingProbability = Math.min(0.18, 0.001 + (0.119 * distanceNorth / 250));
+        
+        // Create a set to track occupied positions (coins, traps, carved areas)
+        const occupiedPositions = new Set();
+        
+        // Add coin positions
+        coinPositions.forEach(pos => {
+            occupiedPositions.add(`${pos.x},${pos.z}`);
+        });
+        
+        // Add trap positions
+        trapPositions.forEach(pos => {
+            occupiedPositions.add(`${pos.x},${pos.z}`);
+        });
+        
+        // Add carved positions
+        for (let x = 14; x <= 16; x++) {
+            for (let z = 0; z < chunkSize; z++) {
+                if (tiles[x][z] === 'carved') {
+                    occupiedPositions.add(`${x},${z}`);
+                }
+            }
+        }
+        
+        // Check each z position for potential slowing floor placement
+        for (let z = 2; z < chunkSize - 10; z++) {
+            if (slowingRng() < slowingProbability) {
+                // Determine patch properties
+                const patchWidth = Math.floor(slowingRng() * 3) + 1; // 1-3 blocks wide
+                const patchLength = Math.floor(slowingRng() * 10) + 1; // 1-10 blocks long
+                
+                // Choose starting lane (ensuring patch fits within corridor)
+                const maxStartX = 16 - patchWidth + 1;
+                const startX = 14 + Math.floor(slowingRng() * (maxStartX - 14 + 1));
+                
+                // Check if this area is clear of other obstacles
+                let canPlace = true;
+                for (let w = 0; w < patchWidth; w++) {
+                    for (let l = 0; l < patchLength && z + l < chunkSize; l++) {
+                        const checkX = startX + w;
+                        const checkZ = z + l;
+                        const posKey = `${checkX},${checkZ}`;
+                        
+                        if (occupiedPositions.has(posKey) || tiles[checkX][checkZ] !== 'corridor_north') {
+                            canPlace = false;
+                            break;
+                        }
+                    }
+                    if (!canPlace) break;
+                }
+                
+                if (canPlace) {
+                    // Place slowing floor patches
+                    const patches = [];
+                    for (let w = 0; w < patchWidth; w++) {
+                        for (let l = 0; l < patchLength && z + l < chunkSize; l++) {
+                            const patchX = startX + w;
+                            const patchZ = z + l;
+                            
+                            // Mark tile as slowing floor
+                            tiles[patchX][patchZ] = 'slowing_floor';
+                            patches.push({ x: patchX, z: patchZ });
+                            
+                            // Add to occupied positions
+                            occupiedPositions.add(`${patchX},${patchZ}`);
+                        }
+                    }
+                    
+                    // Record slowing floor area
+                    slowingFloorPositions.push({
+                        z: z,
+                        startX: startX,
+                        width: patchWidth,
+                        length: patchLength,
+                        patches: patches
+                    });
+                    
+                    // Skip ahead to avoid overlapping patches
+                    z += patchLength + 2;
+                }
+            }
+        }
+    }
+    
+    return { tiles, coinPositions, trapPositions, carverPositions, slowingFloorPositions };
 }
 
 
@@ -2527,6 +2627,7 @@ function setupNoaEngine() {
     var corridorNorthColor = [0.3, 0.3, 0.8]; // Bluish for north corridors
     var corridorWestColor = [0.8, 0.8, 0.3]; // Yellowish for west corridors
     var stairColor = [0.5, 0.5, 0.7]; // Light blue for stairs
+    var slowingFloorColor = [0.5, 0.2, 0.5]; // Purple for slowing floors
     
     noa.registry.registerMaterial('dirt', { color: brownish });
     noa.registry.registerMaterial('stone', { color: grayish });
@@ -2535,6 +2636,7 @@ function setupNoaEngine() {
     noa.registry.registerMaterial('corridorNorth', { color: corridorNorthColor });
     noa.registry.registerMaterial('corridorWest', { color: corridorWestColor });
     noa.registry.registerMaterial('stair', { color: stairColor });
+    noa.registry.registerMaterial('slowingFloor', { color: slowingFloorColor });
     
     // Register blocks
     var dirtID = noa.registry.registerBlock(1, { material: 'dirt' });
@@ -2548,6 +2650,11 @@ function setupNoaEngine() {
         material: 'stair',
         solid: true,
         opaque: false
+    });
+    slowingFloorID = noa.registry.registerBlock(8, {
+        material: 'slowingFloor',
+        solid: true,
+        opaque: true
     });
     
     
@@ -2918,22 +3025,26 @@ function setupNoaEngine() {
                     else if (worldY === 3 && level[i][k] === 'carved') {
                         voxelID = 0; // Empty space - hole in the corridor
                     }
+                    // Handle slowing floor sections
+                    else if (worldY === 3 && level[i][k] === 'slowing_floor') {
+                        voxelID = slowingFloorID; // Purple slowing floor
+                    }
                     // Walls alongside raised north corridors at y=4 and y=5
                     else if ((worldY === 4 || worldY === 5)) {
-                        // Check if we're next to a north corridor or carved section
-                        if (i === 13 && (level[14][k] === 'corridor_north' || level[14][k] === 'carved')) {
+                        // Check if we're next to a north corridor, carved section, or slowing floor
+                        if (i === 13 && (level[14][k] === 'corridor_north' || level[14][k] === 'carved' || level[14][k] === 'slowing_floor')) {
                             // Don't place wall next to carved sections
                             if (level[14][k] === 'carved') {
                                 voxelID = 0; // No wall next to holes
                             } else {
-                                voxelID = dirtID; // West wall of north corridor
+                                voxelID = dirtID; // West wall of north corridor (including slowing floor areas)
                             }
-                        } else if (i === 17 && (level[16][k] === 'corridor_north' || level[16][k] === 'carved')) {
+                        } else if (i === 17 && (level[16][k] === 'corridor_north' || level[16][k] === 'carved' || level[16][k] === 'slowing_floor')) {
                             // Don't place wall next to carved sections
                             if (level[16][k] === 'carved') {
                                 voxelID = 0; // No wall next to holes
                             } else {
-                                voxelID = dirtID; // East wall of north corridor
+                                voxelID = dirtID; // East wall of north corridor (including slowing floor areas)
                             }
                         }
                     }
@@ -3819,6 +3930,67 @@ function setupNoaEngine() {
             handlePlayerDeath('Fell into the void');
         }
     }, 100); // Check 10 times per second
+    
+    // Track slowing floor state
+    let isSlowed = false;
+    let baseMaxSpeed = null;
+    let baseMoveSpeed = null;
+    let baseJumpImpulse = null;
+    
+    // Check for slowing floor and apply movement penalties
+    setInterval(() => {
+        if (!noa || !noa.playerEntity || isPlayerDead) return;
+        
+        const pos = noa.entities.getPosition(noa.playerEntity);
+        const movement = noa.entities.getMovement(noa.playerEntity);
+        const physics = noa.entities.getPhysics(noa.playerEntity);
+        if (!movement || !physics || !physics.body) return;
+        
+        // Check block at player's feet
+        const blockBelow = noa.world.getBlockID(
+            Math.floor(pos[0]), 
+            Math.floor(pos[1] - 1), 
+            Math.floor(pos[2])
+        );
+        
+        // Also check the block at exact player position (in case player is clipping into floor)
+        const blockAt = noa.world.getBlockID(
+            Math.floor(pos[0]), 
+            Math.floor(pos[1]), 
+            Math.floor(pos[2])
+        );
+        
+        // Initialize base values on first run (after 4x multiplier has been applied)
+        if (baseMaxSpeed === null) {
+            baseMaxSpeed = movement.maxSpeed;
+            baseMoveSpeed = movement.moveSpeed;
+            baseJumpImpulse = movement.jumpImpulse;
+        }
+        
+        // Check if player is on or in a slowing floor
+        const onSlowingFloor = (blockBelow === slowingFloorID || blockAt === slowingFloorID);
+        
+        if (onSlowingFloor && !isSlowed) {
+            // Apply severe slowing effect
+            movement.maxSpeed = baseMaxSpeed / 32;  // Much slower (1/32 of boosted speed)
+            movement.moveSpeed = baseMoveSpeed / 32;
+            movement.jumpImpulse = 0; // No jumping allowed
+            
+            // Also slow down current velocity
+            physics.body.velocity[0] *= 0.125; // Instant velocity reduction
+            physics.body.velocity[2] *= 0.125;
+            
+            isSlowed = true;
+            console.log(`Slowing floor activated - speed reduced to 1/32 (was ${baseMaxSpeed}, now ${movement.maxSpeed})`);
+        } else if (!onSlowingFloor && isSlowed) {
+            // Restore original speed
+            movement.maxSpeed = baseMaxSpeed;
+            movement.moveSpeed = baseMoveSpeed;
+            movement.jumpImpulse = baseJumpImpulse;
+            isSlowed = false;
+            console.log(`Left slowing floor - speed restored to ${movement.maxSpeed}`);
+        }
+    }, 50); // Check frequently for responsive slowing
     
     
     // Check player position and rotate to face corridor direction
