@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00120'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00121'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -1822,8 +1822,8 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
     // Generate electric traps in blue (north) corridors
     const trapPositions = [];
     
-    // Skip traps in the initial chunk (0,0) for player safety
-    if (chunkX === 0 && chunkZ === 0) {
+    // Skip traps in spawn chunk and two chunks north for player safety
+    if (chunkX === 0 && (chunkZ === 0 || chunkZ === 1 || chunkZ === 2)) {
         return { tiles, coinPositions, trapPositions };
     }
     
