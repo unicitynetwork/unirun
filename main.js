@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00109'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00111'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -385,9 +385,11 @@ function seededRandom(seed) {
 // Calculate initial spawn point deterministically
 function calculateInitialSpawnPoint(seed) {
     const rng = seededRandom(seed + '_spawn');
-    // Generate level pattern for chunk 0,0
+    // Generate level pattern for chunk -1,0 (one chunk west)
     const chunkSize = 32;
-    const levelData = generateLevelForChunk(0, 0, seed);
+    const spawnChunkX = -1; // One chunk west
+    const spawnChunkZ = 0;
+    const levelData = generateLevelForChunk(spawnChunkX, spawnChunkZ, seed);
     const level = levelData.tiles;
     
     // Find the first open space near the center
@@ -401,20 +403,25 @@ function calculateInitialSpawnPoint(seed) {
                 const x = centerX + dx;
                 const z = centerZ + dz;
                 if (x >= 0 && x < chunkSize && z >= 0 && z < chunkSize && level[x][z] !== 'wall') {
-                    return [x + 0.5, 6, z + 0.5]; // Center of the block, 6 blocks above ground
+                    // Adjust world position to account for chunk offset
+                    const worldX = (spawnChunkX * chunkSize) + x + 0.5;
+                    const worldZ = (spawnChunkZ * chunkSize) + z + 0.5;
+                    return [worldX, 6, worldZ]; // Center of the block, 6 blocks above ground
                 }
             }
         }
     }
     
     // Fallback to center if no open space found
-    return [centerX + 0.5, 6, centerZ + 0.5];
+    const worldX = (spawnChunkX * chunkSize) + centerX + 0.5;
+    const worldZ = (spawnChunkZ * chunkSize) + centerZ + 0.5;
+    return [worldX, 6, worldZ];
 }
 
 // RNG functions for room and exit determination
 function roomExists(x, z, seed) {
     const rng = seededRandom(seed + '_room_' + x + '_' + z);
-    const result = rng() < 0.4; // 40% chance of room
+    const result = rng() < 0.1; // 10% chance of room (4 times scarcer)
     return result;
 }
 
@@ -1587,7 +1594,7 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
         
         // Check for incoming corridors from the closest room in each direction
         // Check East (from the closest room to the west)
-        for (let checkX = chunkX - 1; checkX >= chunkX - 20; checkX--) {
+        for (let checkX = chunkX - 1; checkX >= chunkX - 200; checkX--) {
             if (roomExists(checkX, chunkZ, seed)) {
                 const neighborExits = getRoomExits(checkX, chunkZ, seed);
                 if (neighborExits.east) {
@@ -1603,7 +1610,7 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
         }
         
         // Check South (from the closest room to the south that's sending a corridor north)
-        for (let checkZ = chunkZ - 1; checkZ >= chunkZ - 20; checkZ--) {
+        for (let checkZ = chunkZ - 1; checkZ >= chunkZ - 200; checkZ--) {
             if (roomExists(chunkX, checkZ, seed)) {
                 const neighborExits = getRoomExits(chunkX, checkZ, seed);
                 if (neighborExits.north) {
@@ -1620,7 +1627,7 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
         }
         
         // Check West (from the closest room to the east)
-        for (let checkX = chunkX + 1; checkX <= chunkX + 20; checkX++) {
+        for (let checkX = chunkX + 1; checkX <= chunkX + 200; checkX++) {
             if (roomExists(checkX, chunkZ, seed)) {
                 const neighborExits = getRoomExits(checkX, chunkZ, seed);
                 if (neighborExits.west) {
@@ -1638,7 +1645,7 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
     } else {
         // No room in this chunk - check for corridors from the closest room in each direction
         // Check East (from the closest room to the west)
-        for (let checkX = chunkX - 1; checkX >= chunkX - 20; checkX--) {
+        for (let checkX = chunkX - 1; checkX >= chunkX - 200; checkX--) {
             if (roomExists(checkX, chunkZ, seed)) {
                 const exits = getRoomExits(checkX, chunkZ, seed);
                 if (exits.east) {
@@ -1658,7 +1665,7 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
         
         // Check South (from the closest room to the north)
         let foundSouthRoom = false;
-        for (let checkZ = chunkZ - 1; checkZ >= chunkZ - 20; checkZ--) {
+        for (let checkZ = chunkZ - 1; checkZ >= chunkZ - 200; checkZ--) {
             if (roomExists(chunkX, checkZ, seed)) {
                 const exits = getRoomExits(chunkX, checkZ, seed);
                 foundSouthRoom = true;
@@ -1680,7 +1687,7 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
         let sourceRoomZ = null;
         
         // Find the closest room to the south with a north exit
-        for (let checkZ = chunkZ - 1; checkZ >= chunkZ - 20; checkZ--) {
+        for (let checkZ = chunkZ - 1; checkZ >= chunkZ - 200; checkZ--) {
             if (roomExists(chunkX, checkZ, seed)) {
                 const exits = getRoomExits(chunkX, checkZ, seed);
                 if (exits.north) {
@@ -1694,7 +1701,7 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
         // If there's a room to the south with a north exit, check if there's a destination room to the north
         if (needsNorthCorridor) {
             let foundDestination = false;
-            for (let checkZ = chunkZ; checkZ <= chunkZ + 20; checkZ++) {
+            for (let checkZ = chunkZ; checkZ <= chunkZ + 200; checkZ++) {
                 if (roomExists(chunkX, checkZ, seed)) {
                     foundDestination = true;
                     break;
@@ -1715,7 +1722,7 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
         }
         
         // Check West (from the closest room to the east)
-        for (let checkX = chunkX + 1; checkX <= chunkX + 20; checkX++) {
+        for (let checkX = chunkX + 1; checkX <= chunkX + 200; checkX++) {
             if (roomExists(checkX, chunkZ, seed)) {
                 const exits = getRoomExits(checkX, chunkZ, seed);
                 if (exits.west) {
@@ -1737,6 +1744,13 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
     // Generate coins in blue (north) corridors
     const coinPositions = [];
     const rng = seededRandom(`${seed}_coins_${chunkX}_${chunkZ}`);
+    
+    // Log coin probability for this chunk (only for chunks with north corridors)
+    if (chunkZ >= 0 && (chunkZ <= 100 || chunkZ % 100 === 0)) {
+        const distanceNorth = Math.max(0, chunkZ);
+        const coinProbability = Math.min(0.5, 0.005 + (0.495 * distanceNorth / 4000));
+        console.log(`Chunk (${chunkX}, ${chunkZ}): Coin probability = ${(coinProbability * 100).toFixed(2)}%`);
+    }
     
     // Determine safe zones around rooms (5 blocks before and after to include stairs)
     const roomSafeZones = new Set();
@@ -1794,8 +1808,13 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
                 }
             }
             
+            // Calculate coin probability based on distance north
+            // Start at 0.5% at spawn (z=0), increase to 50% at z=4000 chunks
+            const distanceNorth = Math.max(0, chunkZ);
+            const coinProbability = Math.min(0.5, 0.005 + (0.495 * distanceNorth / 4000));
+            
             // Only place coins if not in safe zone
-            if (!inSafeZone && rng() < 0.5) {
+            if (!inSafeZone && rng() < coinProbability) {
                 // Determine coin cluster length (1-10)
                 const clusterLength = Math.floor(rng() * 10) + 1;
                 
@@ -1856,6 +1875,13 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
     console.log(`Chunk (${chunkX}, ${chunkZ}): Has north corridor but no room - generating traps`);
     const trapRng = seededRandom(`${seed}_traps_${chunkX}_${chunkZ}`);
     
+    // Log trap probability for this chunk
+    if (chunkZ >= 0 && (chunkZ <= 100 || chunkZ % 100 === 0)) {
+        const distanceNorth = Math.max(0, chunkZ);
+        const trapProbability = Math.min(0.15, 0.001 + (0.149 * distanceNorth / 4000));
+        console.log(`Chunk (${chunkX}, ${chunkZ}): Trap probability = ${(trapProbability * 100).toFixed(2)}%`);
+    }
+    
     // Create a set of coin positions for quick lookup
     const coinPosSet = new Set(coinPositions.map(pos => `${pos.x},${pos.z}`));
     
@@ -1872,8 +1898,13 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
                 if (coinPosSet.has(posKey)) {
                     coinBlockedCount++;
                 } else {
-                    // 15% chance for a trap at this position
-                    if (trapRng() < 0.15) {
+                    // Calculate trap probability based on distance north
+                    // Start at 0.1% at spawn (z=0), increase to 15% at z=4000 chunks
+                    const distanceNorth = Math.max(0, chunkZ);
+                    const trapProbability = Math.min(0.15, 0.001 + (0.149 * distanceNorth / 4000));
+                    
+                    // Place trap based on calculated probability
+                    if (trapRng() < trapProbability) {
                         trapPositions.push({ x, z });
                         console.log(`Trap placed at (${x}, ${z}) in chunk (${chunkX}, ${chunkZ})`);
                         // Skip ahead to ensure traps are spaced out
@@ -2530,7 +2561,7 @@ function setupNoaEngine() {
     // If no saved position or invalid position, we need to find a spawn room
     // But we'll do this after chunks are generated
     if (!position || position[1] < -10) {
-        position = [16, 50, 16]; // High up to prevent getting stuck
+        position = [-16, 50, 16]; // High up to prevent getting stuck, one chunk west
         
         // After chunks generate, find proper spawn
         setTimeout(() => {
