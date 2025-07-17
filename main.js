@@ -4752,6 +4752,9 @@ function setupNoaEngine() {
     noa.inputs.bind('left', 'A', 'a');
     noa.inputs.bind('right', 'D', 'd');
     
+    // Set up touch controls for mobile devices
+    setupTouchControls();
+    
     // Configure jump settings to prevent flying and limit jump height
     const movement = noa.entities.getMovement(noa.playerEntity);
     movement.airJumps = 0;  // No jumping while in air - prevents double jumping/flying
@@ -5616,6 +5619,103 @@ function handlePlayerDeath(reason = 'Unknown') {
         }
     };
     document.addEventListener('keydown', respawnHandler);
+}
+
+// Set up touch controls for mobile devices
+function setupTouchControls() {
+    // Detect if we're on a touch device
+    const isTouchDevice = ('ontouchstart' in window) || 
+                         (navigator.maxTouchPoints > 0) || 
+                         (navigator.msMaxTouchPoints > 0);
+    
+    const touchControls = document.getElementById('touchControls');
+    if (!touchControls) return;
+    
+    // Show controls on touch devices
+    if (isTouchDevice) {
+        touchControls.classList.add('show');
+    }
+    
+    // Handle touch events
+    const touchZones = touchControls.querySelectorAll('.touchZone');
+    touchZones.forEach(zone => {
+        const action = zone.getAttribute('data-action');
+        
+        // Touch start - simulate key down
+        zone.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            if (isPlayerDead) {
+                // Special handling for respawn
+                if (action === 'jump') {
+                    respawnPlayer();
+                }
+                return;
+            }
+            
+            // Simulate key press
+            if (action === 'left') {
+                noa.inputs.state.left = true;
+            } else if (action === 'right') {
+                noa.inputs.state.right = true;
+            } else if (action === 'jump') {
+                noa.inputs.state.jump = true;
+            }
+        });
+        
+        // Touch end - simulate key up
+        zone.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            // Simulate key release
+            if (action === 'left') {
+                noa.inputs.state.left = false;
+            } else if (action === 'right') {
+                noa.inputs.state.right = false;
+            } else if (action === 'jump') {
+                noa.inputs.state.jump = false;
+            }
+        });
+        
+        // Also handle mouse events for testing on desktop
+        zone.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            
+            if (isPlayerDead) {
+                if (action === 'jump') {
+                    respawnPlayer();
+                }
+                return;
+            }
+            
+            if (action === 'left') {
+                noa.inputs.state.left = true;
+            } else if (action === 'right') {
+                noa.inputs.state.right = true;
+            } else if (action === 'jump') {
+                noa.inputs.state.jump = true;
+            }
+        });
+        
+        zone.addEventListener('mouseup', (e) => {
+            e.preventDefault();
+            
+            if (action === 'left') {
+                noa.inputs.state.left = false;
+            } else if (action === 'right') {
+                noa.inputs.state.right = false;
+            } else if (action === 'jump') {
+                noa.inputs.state.jump = false;
+            }
+        });
+        
+        // Prevent context menu on touch hold
+        zone.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+        });
+    });
 }
 
 // Respawn player after death

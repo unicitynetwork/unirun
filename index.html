@@ -170,6 +170,47 @@
             0%, 100% { opacity: 1; }
             50% { opacity: 0.3; }
         }
+        /* Touch controls overlay */
+        #touchControls {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 120px;
+            display: none;
+            z-index: 100;
+            pointer-events: none;
+        }
+        #touchControls.show {
+            display: flex;
+        }
+        .touchZone {
+            flex: 1;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: sans-serif;
+            font-size: 24px;
+            font-weight: bold;
+            color: rgba(255, 255, 255, 0.3);
+            user-select: none;
+            pointer-events: auto;
+            cursor: pointer;
+            transition: background-color 0.1s;
+        }
+        .touchZone:active {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+        .touchZone.left {
+            border-right: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .touchZone.right {
+            border-left: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .touchZone.center {
+            background-color: rgba(255, 255, 255, 0.05);
+        }
     </style>
 </head>
 <body>
@@ -206,7 +247,12 @@
     <div id="deathScreen">
         <div class="deathTitle">YOU DIED!</div>
         <div class="deathReason" id="deathReason">Killed by drone</div>
-        <div class="respawnHint">Press SPACE to respawn</div>
+        <div class="respawnHint">Press SPACE or tap ↑ to respawn</div>
+    </div>
+    <div id="touchControls">
+        <div class="touchZone left" data-action="left">←</div>
+        <div class="touchZone center" data-action="jump">↑</div>
+        <div class="touchZone right" data-action="right">→</div>
     </div>
     <script src="/unicity-sdk.js"></script>
     <script type="module" src="/main.js"></script>
