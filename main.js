@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00121'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00122'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -1870,9 +1870,9 @@ function generateLevelForChunk(chunkX, chunkZ, seed) {
                     coinBlockedCount++;
                 } else {
                     // Calculate trap probability based on distance north
-                    // Start at 0.1% at spawn (z=0), increase to 15% at z=250 chunks, max 22.5% at z=375
+                    // Start at 0.05% at spawn (z=0), increase to 7.5% at z=250 chunks, max 11.25% at z=375
                     const distanceNorth = Math.max(0, chunkZ);
-                    const trapProbability = Math.min(0.225, 0.001 + (0.149 * distanceNorth / 250));
+                    const trapProbability = Math.min(0.1125, 0.0005 + (0.0745 * distanceNorth / 250));
                     
                     // Place trap based on calculated probability
                     if (trapRng() < trapProbability) {
