@@ -4024,7 +4024,10 @@ function setupNoaEngine() {
         }
         
         // Handle backpack visibility
+        let backpackCount = 0;
+        let backpacksVisible = 0;
         backpacks.forEach((backpackEntity, backpackKey) => {
+            backpackCount++;
             if (noa.entities.hasComponent(backpackEntity, noa.entities.names.mesh)) {
                 const backpackPos = noa.entities.getPosition(backpackEntity);
                 const meshData = noa.entities.getMeshData(backpackEntity);
@@ -4034,12 +4037,27 @@ function setupNoaEngine() {
                     const dx = backpackPos[0] - playerPos[0];
                     const dz = backpackPos[2] - playerPos[2];
                     const distanceSq = dx * dx + dz * dz;
+                    const distance = Math.sqrt(distanceSq);
                     
                     // Simple distance check
-                    meshData.mesh.setEnabled(distanceSq <= maxRenderDistanceSq);
+                    const isVisible = distanceSq <= maxRenderDistanceSq;
+                    meshData.mesh.setEnabled(isVisible);
+                    
+                    if (isVisible) {
+                        backpacksVisible++;
+                    }
+                    
+                    // Log backpack positions periodically
+                    if (visibilityUpdateCounter % 60 === 0) {
+                        console.log(`Backpack at ${backpackKey}: distance=${distance.toFixed(1)}, visible=${isVisible}, pos=${backpackPos}`);
+                    }
                 }
             }
         });
+        
+        if (visibilityUpdateCounter % 60 === 0 && backpackCount > 0) {
+            console.log(`Backpacks - Total: ${backpackCount}, Visible: ${backpacksVisible}`);
+        }
         
         // Handle electric trap visibility
         traps.forEach((trapEntity, trapKey) => {
@@ -5410,7 +5428,7 @@ function handlePlayerDeath(reason = 'Unknown') {
         const northOffset = 3 + Math.random() * 3; // Random between 3 and 6 blocks
         const backpackSpawnPos = [
             playerPos[0],
-            playerPos[1] + 0.5,
+            playerPos[1] + 1.5, // Higher spawn to avoid getting stuck in floor
             playerPos[2] - northOffset // Negative Z is north
         ];
         
