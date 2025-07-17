@@ -2623,11 +2623,11 @@ function setupNoaEngine() {
     });
     
     
-    // Increase the player's movement speed 2x
+    // Increase the player's movement speed 4x total (was 2x, now doubling again)
     const playerMovement = noa.entities.getMovement(noa.playerEntity);
     if (playerMovement) {
-        playerMovement.maxSpeed *= 2; // 2x the max speed
-        playerMovement.moveSpeed *= 2; // 2x the move speed
+        playerMovement.maxSpeed *= 4; // 4x the max speed (was 2x)
+        playerMovement.moveSpeed *= 4; // 4x the move speed (was 2x)
         
         // Modify jump to last 3x longer but stay under 0.9 blocks height
         // Default jump impulse gives ~1.5 blocks height, so we need to reduce it
@@ -3448,7 +3448,7 @@ function setupNoaEngine() {
             }
         }
         
-    }, 100); // Check every 100ms (reduced from 50ms)
+    }, 50); // Check every 50ms (doubled frequency for faster player)
     
     // Electric trap collision detection
     setInterval(() => {
@@ -3495,7 +3495,7 @@ function setupNoaEngine() {
                 }
             }
         }
-    }, 50); // Check 20 times per second for responsive collision
+    }, 25); // Check 40 times per second (doubled frequency for faster player)
     
     // Moved outside of worldDataNeeded - see line after world generation setup
     
