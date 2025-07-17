@@ -5619,6 +5619,22 @@ function handlePlayerDeath(reason = 'Unknown') {
         }
     };
     document.addEventListener('keydown', respawnHandler);
+    
+    // Also listen for touch/click on death screen
+    const deathScreenClickHandler = (e) => {
+        if (isPlayerDead) {
+            e.preventDefault();
+            document.removeEventListener('keydown', respawnHandler);
+            deathScreen.removeEventListener('click', deathScreenClickHandler);
+            deathScreen.removeEventListener('touchend', deathScreenClickHandler);
+            respawnPlayer();
+        }
+    };
+    
+    if (deathScreen) {
+        deathScreen.addEventListener('click', deathScreenClickHandler);
+        deathScreen.addEventListener('touchend', deathScreenClickHandler);
+    }
 }
 
 // Set up touch controls for mobile devices

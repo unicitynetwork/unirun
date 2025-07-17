@@ -135,6 +135,8 @@
             align-items: center;
             z-index: 1000;
             flex-direction: column;
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
         }
         #deathScreen.show {
             display: flex;
@@ -247,7 +249,7 @@
     <div id="deathScreen">
         <div class="deathTitle">YOU DIED!</div>
         <div class="deathReason" id="deathReason">Killed by drone</div>
-        <div class="respawnHint">Press SPACE or tap ↑ to respawn</div>
+        <div class="respawnHint">Press SPACE or tap anywhere to respawn</div>
     </div>
     <div id="touchControls">
         <div class="touchZone left" data-action="left">←</div>
