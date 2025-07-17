@@ -5355,9 +5355,17 @@ function handlePlayerDeath(reason = 'Unknown') {
         
         console.log(`Player position: ${playerPos}, velocity: ${velocity}`);
         
-        // Create backpack entity at player's position
+        // Calculate backpack spawn position - 3 to 6 blocks north of death position
+        const northOffset = 3 + Math.random() * 3; // Random between 3 and 6 blocks
+        const backpackSpawnPos = [
+            playerPos[0],
+            playerPos[1] + 0.5,
+            playerPos[2] - northOffset // Negative Z is north
+        ];
+        
+        // Create backpack entity at offset position
         const backpackEntity = noa.entities.add(
-            [playerPos[0], playerPos[1] + 0.5, playerPos[2]], // position (slightly above player)
+            backpackSpawnPos,
             0.7, // width
             0.8, // height
             null, // mesh (will be added later)
@@ -5369,10 +5377,10 @@ function handlePlayerDeath(reason = 'Unknown') {
         // Add physics to make it fall and slide
         const backpackPhysics = noa.entities.getPhysics(backpackEntity);
         if (backpackPhysics && backpackPhysics.body) {
-            // Apply player's velocity plus a small upward boost
-            backpackPhysics.body.velocity[0] = velocity[0] * 0.8; // Slight reduction for realism
-            backpackPhysics.body.velocity[1] = Math.max(velocity[1], 2); // Small upward boost
-            backpackPhysics.body.velocity[2] = velocity[2] * 0.8;
+            // Apply northward velocity plus player's lateral velocity
+            backpackPhysics.body.velocity[0] = velocity[0] * 0.5; // Lateral movement
+            backpackPhysics.body.velocity[1] = 3; // Upward arc
+            backpackPhysics.body.velocity[2] = -5; // Strong northward push
             
             // Set friction to allow sliding
             backpackPhysics.body.friction = 0.4;
@@ -5388,16 +5396,16 @@ function handlePlayerDeath(reason = 'Unknown') {
         });
         
         // Add backpack component
-        const backpackKey = `${Math.floor(playerPos[0])},${Math.floor(playerPos[2])}`;
+        const backpackKey = `${Math.floor(backpackSpawnPos[0])},${Math.floor(backpackSpawnPos[2])}`;
         noa.entities.addComponent(backpackEntity, 'isBackpack', {
-            position: [playerPos[0], playerPos[1], playerPos[2]],
+            position: backpackSpawnPos,
             lostCoins: totalCoinsLost,
             backpackKey: backpackKey
         });
         
         // Track backpack
         backpacks.set(backpackKey, backpackEntity);
-        console.log(`Backpack created at ${backpackKey}, entity: ${backpackEntity}, mesh available: ${backpackMesh !== null}`);
+        console.log(`Backpack created at ${backpackKey} (${northOffset.toFixed(1)} blocks north), entity: ${backpackEntity}, mesh available: ${backpackMesh !== null}`);
     } else {
         console.log(`No backpack dropped. Coins: ${totalCoinsLost}, Reason: ${reason}`);
     }
