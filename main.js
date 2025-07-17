@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00117'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00118'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -2704,27 +2704,9 @@ function setupNoaEngine() {
                                 // Not at intersection - empty space under north corridor
                                 voxelID = 0;
                             }
-                        } else if (level[i][k] === 'wall') {
-                            // Only place ground under walls that are next to rooms/corridors
-                            const north = (k > 0) ? level[i][k-1] : 'wall';
-                            const south = (k < 31) ? level[i][k+1] : 'wall';
-                            const east = (i < 31) ? level[i+1][k] : 'wall';
-                            const west = (i > 0) ? level[i-1][k] : 'wall';
-                            
-                            // Place ground if adjacent to room or ground-level corridor
-                            // Don't check for corridor_north since it's at y=3
-                            if (north === 'room' || south === 'room' ||
-                                north === 'corridor_east' || south === 'corridor_east' ||
-                                north === 'corridor_west' || south === 'corridor_west' ||
-                                east === 'room' || west === 'room' ||
-                                east === 'corridor_east' || west === 'corridor_east' ||
-                                east === 'corridor_west' || west === 'corridor_west') {
-                                voxelID = dirtID; // Ground under walls
-                            } else {
-                                voxelID = 0; // Empty space
-                            }
                         } else {
-                            voxelID = 0; // Empty space
+                            // Everything else (including walls) is empty space
+                            voxelID = 0; // Empty space - no floor outside rooms and corridors
                         }
                     }
                     // Place stairs for north corridor at y=1 and y=2 (check this BEFORE walls)
