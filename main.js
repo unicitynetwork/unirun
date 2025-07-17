@@ -2468,12 +2468,14 @@ function setupNoaEngine() {
     noa.camera.zoomDistance = 20;  // Doubled distance for better view
     noa.camera.pitch = 0.333;      // Positive pitch looks up (about 19 degrees)
     
-    // Disable camera collision avoidance - always stay at fixed distance
+    // Disable camera collision avoidance and vertical following
     noa.camera.updateAfterEntityRenderSystems = function() {
         // Override the default behavior - no obstruction checking
         // Camera will always stay at zoomDistance behind player
         this.currentZoom = this.zoomDistance;
     };
+    
+    // Keep original camera behavior - follows player naturally
     
     // Also ensure immediate zoom updates (no smoothing)
     noa.camera.zoomSpeed = 1.0;  // Instant zoom changes
@@ -2629,16 +2631,20 @@ function setupNoaEngine() {
         playerMovement.maxSpeed *= 4; // 4x the max speed (was 2x)
         playerMovement.moveSpeed *= 4; // 4x the move speed (was 2x)
         
-        // Modify jump to last 3x longer but stay under 0.9 blocks height
-        // Default jump impulse gives ~1.5 blocks height, so we need to reduce it
-        // To get 0.9 blocks max height, we need about 60% of default impulse
-        playerMovement.jumpImpulse *= 0.6; // Reduce initial jump force
+        // Double the jump height and gravity
+        playerMovement.jumpImpulse = 36.0; // 2x higher jump (~8 blocks)
         
-        // Reduce gravity to make the jump last 3x longer
-        // Less gravity = slower fall = longer airtime
-        playerMovement.gravity *= 0.33; // 1/3 of normal gravity
+        // Set movement gravity (may not be used but keeping for compatibility)
+        playerMovement.gravity = 160.0; // 16x the default gravity
         
-        // Also reduce air drag to maintain horizontal momentum during long jumps
+        // Set gravity on physics body (this is what actually works)
+        const physics = noa.entities.getPhysics(noa.playerEntity);
+        if (physics && physics.body) {
+            physics.body.gravityMultiplier = 16.0; // 16x gravity (doubled from 8x)
+            console.log('Set gravity multiplier on physics body to 16.0');
+        }
+        
+        // Reduce air drag to maintain horizontal momentum during long jumps
         playerMovement.airDrag *= 0.5; // Half the air resistance
     }
     
@@ -4218,9 +4224,8 @@ function setupNoaEngine() {
     const movement = noa.entities.getMovement(noa.playerEntity);
     movement.airJumps = 0;  // No jumping while in air - prevents double jumping/flying
     
-    // Configure jump height to 0.9 blocks
-    // With gravity of ~10, we need initial velocity of ~4.2 for 0.9 block height
-    movement.jumpImpulse = 4.2;  // Initial jump velocity (was probably ~10 by default)
+    // Configure jump - commented out to use our custom settings from earlier
+    // movement.jumpImpulse = 4.2;  // Commented out - using our 1000 value set earlier
     movement.jumpForce = 0;      // No sustained upward force during jump
     movement.jumpTime = 100;     // Short jump time since we're using impulse only
     
