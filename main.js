@@ -2339,7 +2339,157 @@ function removePendingURCMint(tokenId) {
 
 // Try to complete a pending mint
 async function completeURCMint(pendingMint) {
-    // TODO: Implement recovery logic for pending mints
+    if (!signingService || !pendingMint) return;
+    
+    try {
+        console.log(`Attempting to complete pending mint for ${pendingMint.amount} URC (tokenId: ${pendingMint.tokenId})`);
+        
+        // Check if SDK is properly loaded
+        if (!window.UnicitySDK) {
+            console.error('UnicitySDK not loaded');
+            return;
+        }
+        
+        // Reconstruct the commitment from saved data
+        const tokenId = window.UnicitySDK.TokenId.create(window.UnicitySDK.HexConverter.decode(pendingMint.tokenId));
+        const tokenType = window.UnicitySDK.TokenType.create(window.UnicitySDK.HexConverter.decode(pendingMint.tokenType));
+        const nonce = window.UnicitySDK.HexConverter.decode(pendingMint.nonce);
+        const salt = window.UnicitySDK.HexConverter.decode(pendingMint.salt);
+        
+        // Recreate coin data
+        const coinIdHex = window.UnicitySDK.HexConverter.encode(URC_COIN_ID_BYTES);
+        const coinData = window.UnicitySDK.TokenCoinData.fromJSON([
+            [coinIdHex, pendingMint.amount.toString()]
+        ]);
+        
+        // Recreate predicate
+        const predicate = await window.UnicitySDK.MaskedPredicate.create(
+            tokenId,
+            tokenType,
+            signingService,
+            window.UnicitySDK.HashAlgorithm.SHA256,
+            nonce
+        );
+        
+        // Initialize client
+        const aggregatorClient = new window.UnicitySDK.AggregatorClient(
+            'https://goggregator-test.unicity.network'
+        );
+        const client = new window.UnicitySDK.StateTransitionClient(aggregatorClient);
+        
+        // Check if we have a requestId (mint was already submitted)
+        if (pendingMint.requestId && pendingMint.status === 'submitted') {
+            // Try to get inclusion proof for existing submission
+            try {
+                const requestId = window.UnicitySDK.RequestId.fromJSON(pendingMint.requestId);
+                const commitment = {
+                    requestId: requestId,
+                    transactionData: null, // We don't need this for getting proof
+                    authenticator: null
+                };
+                
+                const inclusionProof = await waitForInclusionProof(client, commitment, 5); // Fewer attempts for recovery
+                
+                // If we got a proof, complete the mint
+                if (inclusionProof) {
+                    // We need to recreate the mint data to build the transaction
+                    const mintData = await window.UnicitySDK.MintTransactionData.create(
+                        tokenId,
+                        tokenType,
+                        new Uint8Array(0),
+                        coinData,
+                        pendingMint.recipient,
+                        salt,
+                        null,
+                        null
+                    );
+                    
+                    // Recreate commitment with mint data
+                    const fullCommitment = await window.UnicitySDK.Commitment.create(
+                        mintData,
+                        await window.UnicitySDK.SigningService.createFromSecret(
+                            window.UnicitySDK.StateTransitionClient.MINTER_SECRET || 
+                            window.UnicitySDK.HexConverter.decode('495f414d5f554e4956455253414c5f4d494e5445525f464f525f'),
+                            tokenId.bytes
+                        )
+                    );
+                    fullCommitment.requestId = requestId;
+                    
+                    // Create transaction
+                    const transaction = await retryOnInclusionProofError(async () => {
+                        return await client.createTransaction(fullCommitment, inclusionProof);
+                    });
+                    
+                    // Create token state
+                    const tokenState = await window.UnicitySDK.TokenState.create(predicate, null);
+                    const token = new window.UnicitySDK.Token(tokenState, transaction, []);
+                    
+                    // Save to inventory
+                    saveURCTokenToInventory(token, pendingMint.amount, pendingMint);
+                    
+                    // Update balances
+                    pendingURCBalance -= pendingMint.amount;
+                    confirmedURCBalance += pendingMint.amount;
+                    updateCoinDisplay();
+                    
+                    console.log(`Successfully completed pending mint for ${pendingMint.amount} URC`);
+                    return;
+                }
+            } catch (error) {
+                console.warn('Could not recover existing mint submission:', error);
+                // Fall through to resubmit
+            }
+        }
+        
+        // If we couldn't recover, resubmit the mint
+        console.log('Resubmitting mint transaction...');
+        const recipient = await window.UnicitySDK.DirectAddress.create(predicate.reference);
+        
+        const mintData = await window.UnicitySDK.MintTransactionData.create(
+            tokenId,
+            tokenType,
+            new Uint8Array(0),
+            coinData,
+            recipient.toString(),
+            salt,
+            null,
+            null
+        );
+        
+        // Submit mint transaction
+        const commitment = await client.submitMintTransaction(mintData);
+        
+        // Update pending mint with new commitment info
+        pendingMint.status = 'submitted';
+        pendingMint.requestId = commitment.requestId.toJSON();
+        savePendingURCMint(pendingMint);
+        
+        // Poll for inclusion proof
+        const inclusionProof = await waitForInclusionProof(client, commitment);
+        
+        // Create transaction
+        const transaction = await retryOnInclusionProofError(async () => {
+            return await client.createTransaction(commitment, inclusionProof);
+        });
+        
+        // Create token state
+        const tokenState = await window.UnicitySDK.TokenState.create(predicate, null);
+        const token = new window.UnicitySDK.Token(tokenState, transaction, []);
+        
+        // Save to inventory
+        saveURCTokenToInventory(token, pendingMint.amount, pendingMint);
+        
+        // Update balances
+        pendingURCBalance -= pendingMint.amount;
+        confirmedURCBalance += pendingMint.amount;
+        updateCoinDisplay();
+        
+        console.log(`Successfully resubmitted and completed pending mint for ${pendingMint.amount} URC`);
+        
+    } catch (error) {
+        console.error('Failed to complete pending URC mint:', error);
+        // Don't remove from pending - we can retry later
+    }
 }
 
 // Wait for inclusion proof with timeout and retry logic
