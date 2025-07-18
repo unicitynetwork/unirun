@@ -3814,12 +3814,15 @@ function setupNoaEngine() {
         }
     }, 100); // Update 10 times per second
     
-    // Electric trap collision detection
+    // Track previous player position for path-based collision detection
+    let previousPlayerPosition = null;
+    
+    // Electric trap collision detection with path checking
     setInterval(() => {
-        if (!noa || !noa.playerEntity) return;
+        if (!noa || !noa.playerEntity || isPlayerDead) return;
         
         const playerPos = noa.entities.getPosition(noa.playerEntity);
-        const playerFeetY = playerPos[1] - 0.9; // Player feet position (player is ~1.8 blocks tall)
+        const playerFeetY = playerPos[1] - 0.8; // Player center is ~0.8 above feet when running
         
         // Get player physics to check if grounded
         const physics = noa.entities.getPhysics(noa.playerEntity);
@@ -3831,32 +3834,72 @@ function setupNoaEngine() {
         // 2. Player is at or very close to floor level (y ~= 3)
         const isGrounded = physics && physics.body && 
                           Math.abs(physics.body.velocity[1]) < 0.1 && 
-                          playerFeetY < 3.5;
+                          Math.abs(physics.body.velocity[1]) < 0.5 && 
+                          playerPos[1] < 4.2; // Player is below trap height when running
         
-        // Check each trap for collision
-        for (const [trapKey, trapEntity] of traps) {
-            if (!noa.entities.hasComponent(trapEntity, noa.entities.names.position)) continue;
+        // If we have a previous position and player is grounded, check the path between positions
+        if (previousPlayerPosition && isGrounded) {
+            const steps = 10; // Number of intermediate points to check
             
-            const trapPos = noa.entities.getPosition(trapEntity);
-            
-            // Check if player is above the trap
-            const dx = Math.abs(playerPos[0] - trapPos[0]);
-            const dy = Math.abs(playerFeetY - trapPos[1]);
-            const dz = Math.abs(playerPos[2] - trapPos[2]);
-            
-            // Check collision (player width is ~0.6, trap width is 0.9)
-            // Trap is at y=4, player runs on floor at y=3, so check if player is close to trap height
-            if (dx < 0.75 && dy < 1.2 && dz < 0.75) {
-                // Only kill if player is grounded (not jumping)
-                if (isGrounded) {
-                    // Player stepped on electric trap - instant death!
-                    handlePlayerDeath('Electrocuted');
-                    break; // Exit loop after death
-                } else {
-                    // Player is jumping over the trap - safe!
+            for (let step = 0; step <= steps; step++) {
+                // Interpolate position along the path
+                const t = step / steps;
+                const checkX = previousPlayerPosition[0] + (playerPos[0] - previousPlayerPosition[0]) * t;
+                const checkY = previousPlayerPosition[1] + (playerPos[1] - previousPlayerPosition[1]) * t;
+                const checkZ = previousPlayerPosition[2] + (playerPos[2] - previousPlayerPosition[2]) * t;
+                const checkFeetY = checkY - 0.8;
+                
+                // Check each trap for collision at this interpolated position
+                for (const [trapKey, trapEntity] of traps) {
+                    if (!noa.entities.hasComponent(trapEntity, noa.entities.names.position)) continue;
+                    
+                    const trapPos = noa.entities.getPosition(trapEntity);
+                    
+                    // Check if player path crosses the trap
+                    const dx = Math.abs(checkX - trapPos[0]);
+                    const dy = Math.abs(checkFeetY - trapPos[1]);
+                    const dz = Math.abs(checkZ - trapPos[2]);
+                    
+                    // Check collision - trap is 0.8 wide, at y=4
+                    // Player runs at ~y=3.8 (feet at y=3, center ~0.8 above)
+                    // Use tighter collision bounds for more precise detection
+                    if (dx < 0.65 && Math.abs(checkFeetY - 3) < 0.5 && dz < 0.65) {
+                        // Player path crossed electric trap - instant death!
+                        console.log(`Trap collision detected via path checking at interpolated position (${checkX.toFixed(2)}, ${checkY.toFixed(2)}, ${checkZ.toFixed(2)})`);
+                        handlePlayerDeath('Electrocuted');
+                        previousPlayerPosition = null; // Reset to prevent multiple deaths
+                        return; // Exit function after death
+                    }
                 }
             }
         }
+        
+        // Also check current position (for cases where player spawns on trap or stands still)
+        if (isGrounded) {
+            for (const [trapKey, trapEntity] of traps) {
+                if (!noa.entities.hasComponent(trapEntity, noa.entities.names.position)) continue;
+                
+                const trapPos = noa.entities.getPosition(trapEntity);
+                
+                // Check if player is above the trap
+                const dx = Math.abs(playerPos[0] - trapPos[0]);
+                const dy = Math.abs(playerFeetY - trapPos[1]);
+                const dz = Math.abs(playerPos[2] - trapPos[2]);
+                
+                // Check collision - more precise bounds
+                // Trap is at y=4, player feet should be at y=3 when running
+                if (dx < 0.65 && Math.abs(playerFeetY - 3) < 0.5 && dz < 0.65) {
+                    // Player on electric trap - instant death!
+                    console.log(`Trap collision detected at current position (${playerPos[0].toFixed(2)}, ${playerPos[1].toFixed(2)}, ${playerPos[2].toFixed(2)})`);
+                    handlePlayerDeath('Electrocuted');
+                    previousPlayerPosition = null; // Reset to prevent multiple deaths
+                    return; // Exit function after death
+                }
+            }
+        }
+        
+        // Update previous position for next check
+        previousPlayerPosition = [playerPos[0], playerPos[1], playerPos[2]];
     }, 25); // Check 40 times per second (doubled frequency for faster player)
     
     // Moved outside of worldDataNeeded - see line after world generation setup
