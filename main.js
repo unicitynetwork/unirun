@@ -25,6 +25,7 @@ let corridorNorthID;
 let corridorWestID;
 let slowingFloorID;
 let stripeBlockID;
+let pillarBlockID;
 
 // Mesh references (will be set during engine setup)
 let backpackMesh = null;
@@ -3048,6 +3049,24 @@ function setupNoaEngine() {
         opaque: false // Not fully opaque due to transparency
     });
     
+    // Create pillar material with transparency
+    var pillarMat = noa.rendering.makeStandardMaterial('pillarMat');
+    var pillarTex = new BABYLON.Texture('/assets/unirun_pillar.png', scene);
+    pillarMat.diffuseTexture = pillarTex;
+    pillarMat.opacityTexture = pillarTex; // Use texture's alpha channel for opacity
+    pillarMat.specularColor = new BABYLON.Color3(0, 0, 0); // No specular
+    
+    noa.registry.registerMaterial('pillar', {
+        renderMaterial: pillarMat
+    });
+    
+    // Pillar blocks for corridor decoration
+    pillarBlockID = noa.registry.registerBlock(10, {
+        material: 'pillar', // All faces use pillar texture
+        solid: true,
+        opaque: false // Not fully opaque due to transparency
+    });
+    
     
     // Function to find a valid spawn position in a room
     function findSpawnRoom(seed) {
@@ -3563,6 +3582,71 @@ function setupNoaEngine() {
                             const adjacentBlock = data.get(nx, 3, nz);
                             if (adjacentBlock === corridorNorthID || adjacentBlock === slowingFloorID) {
                                 data.set(nx, 3, nz, stripeBlockID);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Third pass: Add pillars every 128 blocks along corridors
+        for (let i = 0; i < chunkSize; i++) {
+            for (let k = 0; k < chunkSize; k++) {
+                const worldX = x + i;
+                const worldZ = z + k;
+                
+                // Check if this position should have a pillar (every 128 blocks)
+                const shouldHavePillar = (worldZ % 128) === 0;
+                
+                if (shouldHavePillar) {
+                    // Check for east/west corridors at ground level (y=0)
+                    if (level[i][k] === 'corridor_east' || level[i][k] === 'corridor_west') {
+                        // Place pillars on the sides of east/west corridors
+                        // East/West corridors are 3 blocks wide, so pillars go at edges
+                        
+                        // For east corridor (z=12-14), place pillars at z=11 and z=15
+                        if (k >= 12 && k <= 14 && level[i][k] === 'corridor_east') {
+                            if (k === 12) {
+                                // Place pillar to the north (z-1)
+                                for (let h = 1; h <= 8; h++) {
+                                    data.set(i, h, k - 1, pillarBlockID);
+                                }
+                            } else if (k === 14) {
+                                // Place pillar to the south (z+1)
+                                for (let h = 1; h <= 8; h++) {
+                                    data.set(i, h, k + 1, pillarBlockID);
+                                }
+                            }
+                        }
+                        
+                        // For west corridor (z=16-18), place pillars at z=15 and z=19
+                        if (k >= 16 && k <= 18 && level[i][k] === 'corridor_west') {
+                            if (k === 16) {
+                                // Place pillar to the north (z-1)
+                                for (let h = 1; h <= 8; h++) {
+                                    data.set(i, h, k - 1, pillarBlockID);
+                                }
+                            } else if (k === 18) {
+                                // Place pillar to the south (z+1)
+                                for (let h = 1; h <= 8; h++) {
+                                    data.set(i, h, k + 1, pillarBlockID);
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Check for north corridor at y=3
+                    if (level[i][k] === 'corridor_north') {
+                        // North corridor is at x=14-16, place pillars at x=13 and x=17
+                        if (i === 14) {
+                            // Place pillar to the west (x-1)
+                            for (let h = 4; h <= 11; h++) { // Pillars from y=4 to y=11 for raised corridor
+                                data.set(i - 1, h, k, pillarBlockID);
+                            }
+                        } else if (i === 16) {
+                            // Place pillar to the east (x+1)
+                            for (let h = 4; h <= 11; h++) { // Pillars from y=4 to y=11 for raised corridor
+                                data.set(i + 1, h, k, pillarBlockID);
                             }
                         }
                     }
