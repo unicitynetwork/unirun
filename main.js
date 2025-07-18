@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00131'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00132'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -2842,8 +2842,8 @@ function setupNoaEngine() {
         try {
             const scene = noa.rendering.getScene();
             
-            // Set sky color as fallback
-            scene.clearColor = new BABYLON.Color3(0.529, 0.808, 0.922);
+            // Set dark background with bright yellowish tint
+            scene.clearColor = new BABYLON.Color3(0.15, 0.12, 0.05); // Dark with bright yellow tint
             
             // Store skybox entities and their offsets
             const skyboxEntities = [];
@@ -2892,11 +2892,11 @@ function setupNoaEngine() {
             
             // Only create the north face since we're always facing north
             const skyboxFaces = [
-                // North (front) - positive Z, 3x larger (1.5x from current) and 25% down
-                createSkyboxFace('skyNorth', distance * 1.5,  // 1.5x larger (was distance)
+                // North (front) - positive Z, twice as large and 25% down
+                createSkyboxFace('skyNorth', distance * 2,  // Twice as large
                     new BABYLON.Vector3(0, -distance * 0.25, distance), // 25% down
-                    new BABYLON.Vector3(noa.camera.pitch, 0, 0), // Tilt to match camera angle, no Y rotation needed
-                    '/assets/unirun_skybox_north.png')
+                    new BABYLON.Vector3(0, 0, 0), // No tilt
+                    '/assets/unirun_skyline.png')
             ];
             
             // Update skybox position to follow camera smoothly
@@ -2911,11 +2911,6 @@ function setupNoaEngine() {
                             cameraPos[2] + offset.z
                         ];
                         noa.entities.setPosition(entity, pos);
-                        
-                        // Update rotation to match camera tilt
-                        if (skyboxFaces[index]) {
-                            skyboxFaces[index].rotation.x = noa.camera.pitch;
-                        }
                     });
                 }
             });
@@ -2960,7 +2955,18 @@ function setupNoaEngine() {
     noa.registry.registerMaterial('stone', { color: grayish });
     noa.registry.registerMaterial('roomFloor', { color: roomFloorColor });
     noa.registry.registerMaterial('corridorEast', { color: corridorEastColor });
-    noa.registry.registerMaterial('corridorNorth', { color: corridorNorthColor });
+    // Create custom material for blue corridor floor with full transparency support
+    // Note: noa-engine has limited support for partial transparency, but this hack works
+    var scene = noa.rendering.getScene();
+    var floorMat = noa.rendering.makeStandardMaterial('floorMat');
+    var floorTex = new BABYLON.Texture('/assets/unirun_floor.png', scene);
+    floorMat.diffuseTexture = floorTex;
+    floorMat.opacityTexture = floorTex; // Use texture's alpha channel for opacity
+    floorMat.specularColor = new BABYLON.Color3(0, 0, 0); // No specular for glass-like effect
+    
+    noa.registry.registerMaterial('corridorNorth', {
+        renderMaterial: floorMat
+    });
     noa.registry.registerMaterial('corridorWest', { color: corridorWestColor });
     noa.registry.registerMaterial('stair', { color: stairColor });
     noa.registry.registerMaterial('slowingFloor', { color: slowingFloorColor });
@@ -2970,7 +2976,11 @@ function setupNoaEngine() {
     var stoneID = noa.registry.registerBlock(2, { material: 'stone' });
     roomFloorID = noa.registry.registerBlock(3, { material: 'roomFloor' });
     corridorEastID = noa.registry.registerBlock(4, { material: 'corridorEast' });
-    corridorNorthID = noa.registry.registerBlock(5, { material: 'corridorNorth' });
+    corridorNorthID = noa.registry.registerBlock(5, { 
+        material: 'corridorNorth',
+        opaque: false, // Not fully opaque due to transparency
+        solid: true
+    });
     corridorWestID = noa.registry.registerBlock(6, { material: 'corridorWest' });
     // Simple stair block - full cube collision
     var stairID = noa.registry.registerBlock(7, { 
