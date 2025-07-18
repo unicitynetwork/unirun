@@ -236,9 +236,19 @@
             width: 50%;
             height: 120px;
             border-left: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .touchZone.right::before {
+            content: '';
+            position: absolute;
+            width: 60px;
+            height: 60px;
+            right: 20px;
+            top: 50%;
+            transform: translateY(-50%) rotate(180deg);
             background-image: url('/assets/unirun_arrow.png');
-            background-position: calc(100% - 20px) center;
-            transform: rotate(180deg);
+            background-size: 60px 60px;
+            background-repeat: no-repeat;
+            pointer-events: none;
         }
         .touchZone.jump-left {
             left: 0;
