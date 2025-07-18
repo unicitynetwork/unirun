@@ -45,6 +45,7 @@ let backpackData = new Map(); // Persistent backpack data: key = "x,z", value = 
 let totalDistanceTraveled = 0; // Track total distance traveled north
 let playerStartZ = null; // Track initial Z position
 let isPaused = false; // Track game pause state
+let banners = new Map(); // Track all banners in the world: key = "startZ", value = entity
 
 // Coin inventory tracking
 let confirmedURCBalance = 0; // Confirmed balance from minted tokens
@@ -3654,6 +3655,86 @@ function setupNoaEngine() {
             }
         }
         
+        // Fourth pass: Create banners between pillars
+        // Banners span from one pillar location to the next (128 blocks)
+        for (let i = 0; i < chunkSize; i++) {
+            for (let k = 0; k < chunkSize; k++) {
+                const worldX = x + i;
+                const worldZ = z + k;
+                
+                // Check if this is a pillar position
+                if ((worldZ % 128) === 0) {
+                    // Check for corridors that should have banners
+                    
+                    // East/West corridors
+                    if (level[i][k] === 'corridor_east' || level[i][k] === 'corridor_west') {
+                        const corridorType = level[i][k] === 'corridor_east' ? 'east' : 'west';
+                        const bannerKey = `${corridorType}_${worldZ}`;
+                        
+                        // Only create banner if it doesn't exist
+                        if (!banners.has(bannerKey)) {
+                            // Determine banner Y position based on corridor type
+                            const bannerY = 7; // Top of 8-block pillars
+                            
+                            // Create banner entity at the starting position
+                            const bannerEntity = noa.entities.add(
+                                [worldX, bannerY, worldZ], // Will be repositioned when mesh is created
+                                1, // width
+                                1, // height
+                                null, // mesh (will be added later)
+                                [0, 0, 0], // meshOffset
+                                false, // doPhysics
+                                false  // shadow
+                            );
+                            
+                            if (bannerEntity) {
+                                noa.entities.addComponent(bannerEntity, 'isBanner', {
+                                    startZ: worldZ,
+                                    corridorType: corridorType,
+                                    meshName: `banner_${bannerKey}`,
+                                    needsMesh: true
+                                });
+                                
+                                banners.set(bannerKey, bannerEntity);
+                            }
+                        }
+                    }
+                    
+                    // North corridor
+                    if (level[i][k] === 'corridor_north' && i === 15) { // Center of corridor
+                        const bannerKey = `north_${worldZ}`;
+                        
+                        // Only create banner if it doesn't exist
+                        if (!banners.has(bannerKey)) {
+                            const bannerY = 10; // Top of raised corridor pillars
+                            
+                            // Create banner entity
+                            const bannerEntity = noa.entities.add(
+                                [worldX, bannerY, worldZ], // Will be repositioned when mesh is created
+                                1, // width
+                                1, // height
+                                null, // mesh (will be added later)
+                                [0, 0, 0], // meshOffset
+                                false, // doPhysics
+                                false  // shadow
+                            );
+                            
+                            if (bannerEntity) {
+                                noa.entities.addComponent(bannerEntity, 'isBanner', {
+                                    startZ: worldZ,
+                                    corridorType: 'north',
+                                    meshName: `banner_${bannerKey}`,
+                                    needsMesh: true
+                                });
+                                
+                                banners.set(bannerKey, bannerEntity);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
         // Create coin entities for this chunk, checking each position
         let coinsCreated = 0;
         coinPositions.forEach(coinPos => {
@@ -4006,6 +4087,17 @@ function setupNoaEngine() {
     noa.ents.createComponent({
         name: 'pendingTrapMesh',
         state: {
+            meshName: '',
+            needsMesh: true
+        }
+    });
+    
+    // Register banner component
+    noa.ents.createComponent({
+        name: 'isBanner',
+        state: {
+            startZ: 0,
+            corridorType: '', // 'north', 'east', or 'west'
             meshName: '',
             needsMesh: true
         }
@@ -4788,6 +4880,100 @@ function setupNoaEngine() {
                     
                     // Slight rotation for movement
                     meshData.mesh.rotation.y = time * 0.5;
+                }
+            }
+        });
+        
+        // Handle banner visibility and mesh creation
+        banners.forEach((bannerEntity, bannerKey) => {
+            if (!noa.entities.hasComponent(bannerEntity, noa.entities.names.position)) return;
+            
+            const bannerData = noa.entities.getState(bannerEntity, 'isBanner');
+            const bannerPos = noa.entities.getPosition(bannerEntity);
+            
+            // Check if banner needs mesh created
+            if (bannerData.needsMesh) {
+                const dx = bannerPos[0] - playerPos[0];
+                const dz = bannerPos[2] - playerPos[2];
+                const distanceSq = dx * dx + dz * dz;
+                
+                // Only create mesh if within reasonable distance
+                if (distanceSq <= maxRenderDistanceSq * 4) { // Larger distance for banners
+                    // Calculate color based on Z position (gradually from green to red)
+                    const progress = Math.min(bannerData.startZ / (250 * 32), 1); // 250 chunks * 32 blocks per chunk
+                    const red = progress;
+                    const green = 1 - progress;
+                    
+                    // Create banner mesh - spans between left and right pillars of corridor
+                    let bannerWidth, bannerMesh;
+                    
+                    if (bannerData.corridorType === 'north') {
+                        // North corridor: pillars are at x=13 and x=17, so banner spans 4 blocks
+                        bannerWidth = 4;
+                        bannerMesh = BABYLON.MeshBuilder.CreatePlane(bannerData.meshName, {
+                            width: bannerWidth,
+                            height: 2,  // 2 blocks tall
+                            sideOrientation: BABYLON.Mesh.DOUBLESIDE
+                        }, scene);
+                    } else {
+                        // East/West corridors: pillars are at edges of 3-block wide corridor, so banner spans 4 blocks
+                        bannerWidth = 4;
+                        bannerMesh = BABYLON.MeshBuilder.CreatePlane(bannerData.meshName, {
+                            width: bannerWidth,
+                            height: 2,  // 2 blocks tall
+                            sideOrientation: BABYLON.Mesh.DOUBLESIDE
+                        }, scene);
+                    }
+                    
+                    // Create banner material with color gradient
+                    const bannerMaterial = new BABYLON.StandardMaterial(`${bannerData.meshName}_mat`, scene);
+                    bannerMaterial.diffuseColor = new BABYLON.Color3(red, green, 0);
+                    bannerMaterial.emissiveColor = new BABYLON.Color3(red * 0.3, green * 0.3, 0);
+                    bannerMaterial.alpha = 0.5; // Half transparent
+                    bannerMaterial.backFaceCulling = false;
+                    
+                    bannerMesh.material = bannerMaterial;
+                    
+                    // Position banner correctly based on corridor type
+                    if (bannerData.corridorType === 'north') {
+                        // North corridor: banner hangs between pillars at x=13 and x=17
+                        bannerMesh.position.x = 15; // Center between pillars
+                        bannerMesh.position.y = bannerPos[1] + 1; // Center of top 2 blocks
+                        bannerMesh.position.z = bannerPos[2]; // At pillar Z position
+                        bannerMesh.rotation.y = 0; // Face north/south (was PI/2)
+                    } else if (bannerData.corridorType === 'east') {
+                        // East corridor at z=12-14: pillars at z=11 and z=15
+                        bannerMesh.position.x = bannerPos[0]; // Keep X from entity
+                        bannerMesh.position.y = bannerPos[1] + 1; // Center of top 2 blocks
+                        bannerMesh.position.z = 13; // Center of corridor
+                        bannerMesh.rotation.y = Math.PI / 2; // Face east/west (was 0)
+                    } else { // west
+                        // West corridor at z=16-18: pillars at z=15 and z=19
+                        bannerMesh.position.x = bannerPos[0]; // Keep X from entity
+                        bannerMesh.position.y = bannerPos[1] + 1; // Center of top 2 blocks
+                        bannerMesh.position.z = 17; // Center of corridor
+                        bannerMesh.rotation.y = Math.PI / 2; // Face east/west (was 0)
+                    }
+                    
+                    // Add mesh to entity
+                    noa.entities.addComponent(bannerEntity, noa.entities.names.mesh, {
+                        mesh: bannerMesh,
+                        offset: [0, 0, 0]
+                    });
+                    
+                    bannerData.needsMesh = false;
+                }
+            }
+            
+            // Update visibility for existing banner mesh
+            if (noa.entities.hasComponent(bannerEntity, noa.entities.names.mesh)) {
+                const meshData = noa.entities.getMeshData(bannerEntity);
+                if (meshData && meshData.mesh) {
+                    const dx = bannerPos[0] - playerPos[0];
+                    const dz = bannerPos[2] - playerPos[2];
+                    const distanceSq = dx * dx + dz * dz;
+                    
+                    meshData.mesh.setEnabled(distanceSq <= maxRenderDistanceSq * 4);
                 }
             }
         });
