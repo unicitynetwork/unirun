@@ -2845,7 +2845,10 @@ function setupNoaEngine() {
             // Set sky color as fallback
             scene.clearColor = new BABYLON.Color3(0.529, 0.808, 0.922);
             
-            // Create skybox faces
+            // Store skybox entities and their offsets
+            const skyboxEntities = [];
+            
+            // Create skybox faces using entities
             const createSkyboxFace = (name, size, offset, rotation, texturePath) => {
                 const plane = BABYLON.MeshBuilder.CreatePlane(name, { 
                     size: size,
@@ -2866,79 +2869,56 @@ function setupNoaEngine() {
                 
                 // Create entity for this face
                 const entity = noa.entities.add(
-                    [0, 0, 0],
-                    1, 1,
-                    null,
-                    null,
-                    false,
-                    false
+                    [0, 0, 0],  // position (will be updated)
+                    1, 1,       // width, height
+                    null,       // mesh (will add)
+                    null,       // meshOffset
+                    false,      // doPhysics
+                    false       // shadow
                 );
                 
+                // Add mesh component
                 noa.entities.addComponent(entity, noa.entities.names.mesh, {
                     mesh: plane,
                     offset: [0, 0, 0]
                 });
                 
-                return { plane, entity, offset };
+                skyboxEntities.push({ entity, offset });
+                return plane;
             };
             
-            // Distance from camera
-            const distance = 300;
+            // Distance from camera for north face
+            const distance = 3000;
             
-            // Create all 6 faces
+            // Only create the north face since we're always facing north
             const skyboxFaces = [
-                // North (front) - positive Z
-                createSkyboxFace('skyNorth', distance * 2, 
-                    new BABYLON.Vector3(0, 0, distance),
-                    new BABYLON.Vector3(0, Math.PI, 0),
-                    '/assets/unirun_skybox_north.png'),
-                
-                // South (back) - negative Z (using north texture since no south)
-                createSkyboxFace('skySouth', distance * 2,
-                    new BABYLON.Vector3(0, 0, -distance),
-                    new BABYLON.Vector3(0, 0, 0),
-                    '/assets/unirun_skybox_north.png'),
-                
-                // East (right) - positive X
-                createSkyboxFace('skyEast', distance * 2,
-                    new BABYLON.Vector3(distance, 0, 0),
-                    new BABYLON.Vector3(0, -Math.PI/2, 0),
-                    '/assets/unirun_skybox_east.png'),
-                
-                // West (left) - negative X
-                createSkyboxFace('skyWest', distance * 2,
-                    new BABYLON.Vector3(-distance, 0, 0),
-                    new BABYLON.Vector3(0, Math.PI/2, 0),
-                    '/assets/unirun_skybox_west.png'),
-                
-                // Top (sky) - positive Y
-                createSkyboxFace('skyTop', distance * 2,
-                    new BABYLON.Vector3(0, distance, 0),
-                    new BABYLON.Vector3(Math.PI/2, 0, 0),
-                    '/assets/unirun_skybox_sky.png'),
-                
-                // Bottom (ground) - negative Y
-                createSkyboxFace('skyBottom', distance * 2,
-                    new BABYLON.Vector3(0, -distance, 0),
-                    new BABYLON.Vector3(-Math.PI/2, 0, 0),
-                    '/assets/unirun_skybox_ground.png')
+                // North (front) - positive Z, 3x larger (1.5x from current) and 25% down
+                createSkyboxFace('skyNorth', distance * 1.5,  // 1.5x larger (was distance)
+                    new BABYLON.Vector3(0, -distance * 0.25, distance), // 25% down
+                    new BABYLON.Vector3(noa.camera.pitch, 0, 0), // Tilt to match camera angle, no Y rotation needed
+                    '/assets/unirun_skybox_north.png')
             ];
             
-            // Make all faces follow the camera
-            setInterval(() => {
+            // Update skybox position to follow camera smoothly
+            scene.registerBeforeRender(() => {
                 if (noa.camera) {
                     const cameraPos = noa.camera.getPosition();
                     
-                    skyboxFaces.forEach(face => {
+                    skyboxEntities.forEach(({ entity, offset }, index) => {
                         const pos = [
-                            cameraPos[0] + face.offset.x,
-                            cameraPos[1] + face.offset.y,
-                            cameraPos[2] + face.offset.z
+                            cameraPos[0] + offset.x,
+                            cameraPos[1] + offset.y,
+                            cameraPos[2] + offset.z
                         ];
-                        noa.entities.setPosition(face.entity, pos);
+                        noa.entities.setPosition(entity, pos);
+                        
+                        // Update rotation to match camera tilt
+                        if (skyboxFaces[index]) {
+                            skyboxFaces[index].rotation.x = noa.camera.pitch;
+                        }
                     });
                 }
-            }, 16); // 60 FPS
+            });
             
             console.log('Created full skybox with 6 textured faces');
             
