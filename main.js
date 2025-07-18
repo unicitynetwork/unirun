@@ -24,6 +24,7 @@ let corridorEastID;
 let corridorNorthID;
 let corridorWestID;
 let slowingFloorID;
+let stripeBlockID;
 
 // Mesh references (will be set during engine setup)
 let backpackMesh = null;
@@ -3040,6 +3041,13 @@ function setupNoaEngine() {
         opaque: false // Not fully opaque due to transparency
     });
     
+    // Stripe warning blocks to place around holes/edges
+    stripeBlockID = noa.registry.registerBlock(9, {
+        material: 'floorStripes', // All faces use stripes
+        solid: true,
+        opaque: false // Not fully opaque due to transparency
+    });
+    
     
     // Function to find a valid spawn position in a room
     function findSpawnRoom(seed) {
@@ -3530,6 +3538,38 @@ function setupNoaEngine() {
             });
         }
         
+        // Second pass: Add stripe blocks around carved holes
+        // Check north corridor level (y=3) for holes and add stripes around them
+        for (let x = 0; x < chunkSize; x++) {
+            for (let z = 0; z < chunkSize; z++) {
+                // Check if there's a hole (empty space) at y=3 where there should be corridor floor
+                if (data.get(x, 3, z) === 0 && level[x][z] === 'carved') {
+                    // Place stripe blocks around the hole at y=3
+                    // Check all 4 directions
+                    const directions = [
+                        {dx: -1, dz: 0}, // west
+                        {dx: 1, dz: 0},  // east
+                        {dx: 0, dz: -1}, // north
+                        {dx: 0, dz: 1}   // south
+                    ];
+                    
+                    for (const dir of directions) {
+                        const nx = x + dir.dx;
+                        const nz = z + dir.dz;
+                        
+                        // Check bounds
+                        if (nx >= 0 && nx < chunkSize && nz >= 0 && nz < chunkSize) {
+                            // If adjacent position has corridor floor, replace with stripe block
+                            const adjacentBlock = data.get(nx, 3, nz);
+                            if (adjacentBlock === corridorNorthID || adjacentBlock === slowingFloorID) {
+                                data.set(nx, 3, nz, stripeBlockID);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
         // Create coin entities for this chunk, checking each position
         let coinsCreated = 0;
         coinPositions.forEach(coinPos => {
@@ -3620,9 +3660,9 @@ function setupNoaEngine() {
             if (!traps.has(trapKey)) {
                 // Create electric trap entity
                 const trapEntity = noa.entities.add(
-                    [worldX + 0.5, worldY, worldZ + 0.5], // position (centered on block)
+                    [worldX + 0.5, worldY + 0.5, worldZ + 0.5], // position (centered on block, raised for bolts)
                     0.8, // width (slightly smaller than full block)
-                    0.1, // height (thin, like a floor panel)
+                    2.0, // height (tall for lightning bolts)
                     null, // mesh (will be added later)
                     [0, 0, 0], // meshOffset
                     false, // doPhysics - no physics for traps
@@ -3915,18 +3955,41 @@ function setupNoaEngine() {
     // Hide the original mesh
     coinMesh.setEnabled(false);
     
-    // Create electric trap mesh - a flat panel with electric effect
-    const trapMesh = BABYLON.MeshBuilder.CreateBox('electricTrap', {
-        width: 0.9,
-        height: 0.15, // Thicker to ensure visibility above floor
-        depth: 0.9
-    }, noa.rendering.getScene());
+    // Create electric trap mesh - multiple vertical lightning bolts
+    // Use existing scene variable from above
     
-    // Electric trap material - dangerous looking with animation
-    const trapMaterial = new BABYLON.StandardMaterial('trapMaterial', noa.rendering.getScene());
-    trapMaterial.diffuseColor = new BABYLON.Color3(0.1, 0.1, 0.2); // Dark blue-black base
-    trapMaterial.emissiveColor = new BABYLON.Color3(0.3, 0.5, 1.0); // Electric blue glow
-    trapMaterial.specularColor = new BABYLON.Color3(0.5, 0.7, 1.0); // Bright blue specular
+    // Create a group of vertical planes for lightning effect
+    const boltMeshes = [];
+    const boltCount = 4; // 4 bolts arranged in cross pattern
+    
+    for (let i = 0; i < boltCount; i++) {
+        const angle = (i / boltCount) * Math.PI * 2;
+        const boltPlane = BABYLON.MeshBuilder.CreatePlane(`bolt_${i}`, {
+            width: 0.6,
+            height: 2.0, // Tall vertical bolts
+            sideOrientation: BABYLON.Mesh.DOUBLESIDE
+        }, scene);
+        
+        // Position and rotate each bolt
+        boltPlane.position.x = Math.cos(angle) * 0.1;
+        boltPlane.position.z = Math.sin(angle) * 0.1;
+        boltPlane.position.y = 1.0; // Center vertically
+        boltPlane.rotation.y = angle;
+        
+        boltMeshes.push(boltPlane);
+    }
+    
+    // Merge all bolts into single mesh for performance
+    const trapMesh = BABYLON.Mesh.MergeMeshes(boltMeshes, true, true, undefined, false, true);
+    trapMesh.name = 'electricTrap';
+    
+    // Electric trap material - glowing lightning effect
+    const trapMaterial = new BABYLON.StandardMaterial('trapMaterial', scene);
+    trapMaterial.diffuseColor = new BABYLON.Color3(0.8, 0.9, 1.0); // Light blue-white
+    trapMaterial.emissiveColor = new BABYLON.Color3(0.3, 0.6, 1.0); // Electric blue glow
+    trapMaterial.specularColor = new BABYLON.Color3(1.0, 1.0, 1.0); // White specular
+    trapMaterial.alpha = 0.9; // Slightly transparent
+    trapMaterial.backFaceCulling = false; // Show both sides
     trapMaterial.freeze(); // Freeze material to improve performance
     trapMesh.material = trapMaterial;
     
@@ -4623,10 +4686,24 @@ function setupNoaEngine() {
                     // Simple distance check
                     meshData.mesh.setEnabled(distanceSq <= maxRenderDistanceSq);
                     
-                    // Animate trap with electric pulse effect
+                    // Animate trap with electric bolt effects
                     const time = Date.now() * 0.001;
-                    const pulse = Math.sin(time * 3) * 0.5 + 0.5; // Oscillate between 0 and 1
-                    meshData.mesh.material.emissiveColor.b = 0.5 + pulse * 0.5; // Pulse blue channel
+                    const fastFlicker = Math.sin(time * 20) * 0.3; // Fast flicker
+                    const slowPulse = Math.sin(time * 3) * 0.5 + 0.5; // Slow pulse
+                    const randomFlicker = Math.random() > 0.95 ? 0 : 1; // Occasional blackout
+                    
+                    // Animate emissive color for electric effect
+                    const intensity = (slowPulse + fastFlicker) * randomFlicker;
+                    meshData.mesh.material.emissiveColor.r = 0.3 + intensity * 0.4;
+                    meshData.mesh.material.emissiveColor.g = 0.6 + intensity * 0.3;
+                    meshData.mesh.material.emissiveColor.b = 1.0;
+                    
+                    // Animate scale for pulsing effect
+                    const scaleY = 0.8 + slowPulse * 0.4; // Vertical scaling
+                    meshData.mesh.scaling.y = scaleY;
+                    
+                    // Slight rotation for movement
+                    meshData.mesh.rotation.y = time * 0.5;
                 }
             }
         });
