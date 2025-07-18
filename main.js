@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00130'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00131'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -64,6 +64,16 @@ let tokenStatus = {
 
 // Update coin display
 function updateCoinDisplay() {
+    // Ensure balances are never negative
+    if (pendingURCBalance < 0) {
+        console.warn(`Correcting negative pending balance: ${pendingURCBalance}`);
+        pendingURCBalance = 0;
+    }
+    if (confirmedURCBalance < 0) {
+        console.warn(`Correcting negative confirmed balance: ${confirmedURCBalance}`);
+        confirmedURCBalance = 0;
+    }
+    
     const coinDisplay = document.getElementById('coinDisplay');
     if (coinDisplay) {
         coinDisplay.innerHTML = `
@@ -2196,10 +2206,72 @@ async function mintURCToken(amount) {
         // Save to inventory
         saveURCTokenToInventory(token, amount, pendingMint);
         
-        // Update balances
-        pendingURCBalance -= amount;
-        confirmedURCBalance += amount;
-        updateCoinDisplay();
+        // Update balances - handle case where player died during minting
+        if (isPlayerDead) {
+            // Player died - add minted coins to the last death's backpack if it exists
+            const backpackKeys = Array.from(backpackData.keys());
+            if (backpackKeys.length > 0) {
+                // Find the most recent backpack
+                const mostRecentKey = backpackKeys.reduce((latest, key) => {
+                    const latestData = backpackData.get(latest);
+                    const keyData = backpackData.get(key);
+                    return keyData.createdAt > latestData.createdAt ? key : latest;
+                });
+                
+                // Add the minted coins to the backpack
+                const data = backpackData.get(mostRecentKey);
+                data.lostCoins += amount;
+                
+                // Update inventory in backpack
+                if (!data.inventory) {
+                    data.inventory = {
+                        confirmedBalance: 0,
+                        pendingBalance: 0,
+                        totalCoins: data.lostCoins,
+                        mintedTokens: [],
+                        pendingMints: []
+                    };
+                }
+                
+                // Add this newly minted token to the backpack's inventory
+                data.inventory.confirmedBalance += amount;
+                data.inventory.totalCoins = data.lostCoins;
+                data.inventory.mintedTokens.push({
+                    tokenId: pendingMint.tokenId,
+                    amount: amount,
+                    token: token.toJSON(),
+                    mintedAt: Date.now()
+                });
+                
+                backpackData.set(mostRecentKey, data);
+                
+                // Update the backpack entity if it exists
+                if (backpacks.has(mostRecentKey)) {
+                    const backpackEntity = backpacks.get(mostRecentKey);
+                    if (noa.entities.hasComponent(backpackEntity, 'isBackpack')) {
+                        const backpackState = noa.entities.getState(backpackEntity, 'isBackpack');
+                        backpackState.lostCoins = data.lostCoins;
+                        backpackState.inventory = data.inventory;
+                    }
+                }
+                
+                console.log(`Player died during minting - added ${amount} coins to backpack at ${mostRecentKey}`);
+            }
+            // Don't update balances since player is dead
+        } else {
+            // Normal case - player is alive
+            // Ensure we don't go negative
+            if (pendingURCBalance >= amount) {
+                pendingURCBalance -= amount;
+                confirmedURCBalance += amount;
+            } else {
+                // This shouldn't happen, but handle it gracefully
+                console.warn(`Pending balance ${pendingURCBalance} is less than mint amount ${amount}`);
+                confirmedURCBalance += pendingURCBalance; // Add whatever was pending
+                pendingURCBalance = 0;
+            }
+            updateCoinDisplay();
+        }
         
     } catch (error) {
         console.error('Failed to mint URC token:', error);
@@ -3314,11 +3386,12 @@ function setupNoaEngine() {
                     offset: [0, 0.6, 0]
                 });
                 
-                // Add backpack component
+                // Add backpack component with inventory
                 noa.entities.addComponent(backpackEntity, 'isBackpack', {
                     position: data.position,
                     lostCoins: data.lostCoins,
-                    backpackKey: key
+                    backpackKey: key,
+                    inventory: data.inventory || null
                 });
                 
                 // Track the entity
@@ -3769,27 +3842,73 @@ function setupNoaEngine() {
             if (distanceSq < 4.0) { // 2.0 * 2.0
                 // Collect backpack
                 const backpackData = noa.entities.getState(backpackEntity, 'isBackpack');
-                if (backpackData) {
-                    // Restore coins to player
+                if (backpackData && backpackData.inventory) {
+                    // Restore full inventory from backpack
+                    const inv = backpackData.inventory;
+                    
+                    // Restore balances
+                    confirmedURCBalance += inv.confirmedBalance || 0;
+                    pendingURCBalance += inv.pendingBalance || 0;
+                    playerCoins += inv.totalCoins || 0;
+                    
+                    // Restore minted tokens to inventory
+                    if (inv.mintedTokens && inv.mintedTokens.length > 0) {
+                        let currentInventory = { tokens: [], confirmedBalance: 0 };
+                        const stored = localStorage.getItem('unicityRunner_urcInventory');
+                        if (stored) {
+                            currentInventory = JSON.parse(stored);
+                        }
+                        
+                        // Add tokens from backpack
+                        currentInventory.tokens.push(...inv.mintedTokens);
+                        currentInventory.confirmedBalance = currentInventory.tokens.reduce((sum, t) => sum + t.amount, 0);
+                        localStorage.setItem('unicityRunner_urcInventory', JSON.stringify(currentInventory));
+                    }
+                    
+                    // Restore pending mints
+                    if (inv.pendingMints && inv.pendingMints.length > 0) {
+                        let currentPending = { mints: [], totalAmount: 0 };
+                        const stored = localStorage.getItem('unicityRunner_pendingURCMints');
+                        if (stored) {
+                            currentPending = JSON.parse(stored);
+                        }
+                        
+                        // Add pending mints from backpack
+                        currentPending.mints.push(...inv.pendingMints);
+                        currentPending.totalAmount = currentPending.mints.reduce((sum, m) => sum + m.amount, 0);
+                        localStorage.setItem('unicityRunner_pendingURCMints', JSON.stringify(currentPending));
+                        
+                        // Resume pending mints
+                        inv.pendingMints.forEach(mint => {
+                            completeURCMint(mint).catch(err => {
+                                console.error('Failed to resume pending URC mint from backpack:', err);
+                            });
+                        });
+                    }
+                    
+                    updateCoinDisplay();
+                    
+                    console.log(`Collected backpack with full inventory: ${inv.confirmedBalance} confirmed, ${inv.pendingBalance} pending, ${inv.mintedTokens.length} tokens, ${inv.pendingMints.length} pending mints`);
+                } else if (backpackData) {
+                    // Legacy backpack without inventory - just restore coins as pending
                     pendingURCBalance += backpackData.lostCoins;
                     playerCoins += backpackData.lostCoins;
                     updateCoinDisplay();
-                    
-                    console.log(`Collected backpack with ${backpackData.lostCoins} URC!`);
-                    
-                    // Remove backpack mesh and entity
-                    try {
-                        const meshData = noa.entities.getMeshData(backpackEntity);
-                        if (meshData && meshData.mesh) {
-                            meshData.mesh.dispose();
-                        }
-                        noa.entities.deleteEntity(backpackEntity);
-                    } catch (e) {
-                        console.error('Error deleting backpack entity:', e);
-                    }
-                    
-                    backpacksToRemove.push(backpackKey);
+                    console.log(`Collected legacy backpack with ${backpackData.lostCoins} URC!`);
                 }
+                
+                // Remove backpack mesh and entity (for both new and legacy backpacks)
+                try {
+                    const meshData = noa.entities.getMeshData(backpackEntity);
+                    if (meshData && meshData.mesh) {
+                        meshData.mesh.dispose();
+                    }
+                    noa.entities.deleteEntity(backpackEntity);
+                } catch (e) {
+                    console.error('Error deleting backpack entity:', e);
+                }
+                
+                backpacksToRemove.push(backpackKey);
             }
         });
         
@@ -5550,9 +5669,32 @@ function handlePlayerDeath(reason = 'Unknown') {
     // Get total coins lost (confirmed + pending)
     const totalCoinsLost = confirmedURCBalance + pendingURCBalance;
     
+    // Prepare inventory data for backpack
+    let backpackInventory = {
+        confirmedBalance: confirmedURCBalance,
+        pendingBalance: pendingURCBalance,
+        totalCoins: totalCoinsLost,
+        mintedTokens: [],
+        pendingMints: []
+    };
+    
+    // Get minted tokens from inventory
+    const inventoryData = localStorage.getItem('unicityRunner_urcInventory');
+    if (inventoryData) {
+        const inventory = JSON.parse(inventoryData);
+        backpackInventory.mintedTokens = inventory.tokens || [];
+    }
+    
+    // Get pending mints
+    const pendingMintsData = localStorage.getItem('unicityRunner_pendingURCMints');
+    if (pendingMintsData) {
+        const pending = JSON.parse(pendingMintsData);
+        backpackInventory.pendingMints = pending.mints || [];
+    }
+    
     // Drop backpack if player had coins and didn't fall into void
     if (totalCoinsLost > 0 && reason !== 'Fell into the void') {
-        console.log(`Dropping backpack with ${totalCoinsLost} coins. Death reason: ${reason}`);
+        console.log(`Dropping backpack with ${totalCoinsLost} coins (${backpackInventory.mintedTokens.length} minted tokens, ${backpackInventory.pendingMints.length} pending mints). Death reason: ${reason}`);
         const playerPos = noa.entities.getPosition(noa.playerEntity);
         const physics = noa.entities.getPhysics(noa.playerEntity);
         
@@ -5658,12 +5800,13 @@ function handlePlayerDeath(reason = 'Unknown') {
             offset: [0, 0.6, 0] // Center the larger mesh
         });
         
-        // Add backpack component
+        // Add backpack component with full inventory
         const backpackKey = `${Math.floor(finalSpawnPos[0])},${Math.floor(finalSpawnPos[2])}`;
         noa.entities.addComponent(backpackEntity, 'isBackpack', {
             position: finalSpawnPos,
             lostCoins: totalCoinsLost,
-            backpackKey: backpackKey
+            backpackKey: backpackKey,
+            inventory: backpackInventory
         });
         
         // Track backpack entity and persistent data
@@ -5671,6 +5814,7 @@ function handlePlayerDeath(reason = 'Unknown') {
         backpackData.set(backpackKey, {
             position: finalSpawnPos,
             lostCoins: totalCoinsLost,
+            inventory: backpackInventory,
             createdAt: Date.now()
         });
         console.log(`Backpack created at ${backpackKey} (${northOffset.toFixed(1)} blocks north), entity: ${backpackEntity}, mesh available: ${backpackMesh !== null}`);
@@ -5678,10 +5822,17 @@ function handlePlayerDeath(reason = 'Unknown') {
         console.log(`No backpack dropped. Coins: ${totalCoinsLost}, Reason: ${reason}`);
     }
     
-    // Clear player's coin balance
+    // Clear player's coin balance and inventory
     confirmedURCBalance = 0;
     pendingURCBalance = 0;
     playerCoins = 0;
+    
+    // Clear stored inventory data since it's now in the backpack
+    if (totalCoinsLost > 0 && reason !== 'Fell into the void') {
+        localStorage.removeItem('unicityRunner_urcInventory');
+        localStorage.removeItem('unicityRunner_pendingURCMints');
+    }
+    
     updateCoinDisplay();
     
     // Show death screen with stats
