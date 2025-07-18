@@ -2960,6 +2960,10 @@ function setupNoaEngine() {
     var scene = noa.rendering.getScene();
     var floorMat = noa.rendering.makeStandardMaterial('floorMat');
     var floorTex = new BABYLON.Texture('/assets/unirun_floor.png', scene);
+    
+    // Rotate texture 180 degrees
+    floorTex.wAng = Math.PI; // 180 degrees in radians
+    
     floorMat.diffuseTexture = floorTex;
     floorMat.opacityTexture = floorTex; // Use texture's alpha channel for opacity
     floorMat.specularColor = new BABYLON.Color3(0, 0, 0); // No specular for glass-like effect
