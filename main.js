@@ -2993,6 +2993,17 @@ function setupNoaEngine() {
         renderMaterial: slowingMat
     });
     
+    // Create material for floor block sides with stripes texture
+    var stripesMat = noa.rendering.makeStandardMaterial('stripesMat');
+    var stripesTex = new BABYLON.Texture('/assets/unirun_stripes.png', scene);
+    stripesMat.diffuseTexture = stripesTex;
+    stripesMat.opacityTexture = stripesTex; // Use texture's alpha channel for opacity
+    stripesMat.specularColor = new BABYLON.Color3(0, 0, 0); // No specular
+    
+    noa.registry.registerMaterial('floorStripes', {
+        renderMaterial: stripesMat
+    });
+    
     // Register blocks
     var dirtID = noa.registry.registerBlock(1, { 
         material: 'dirt',
@@ -3000,14 +3011,23 @@ function setupNoaEngine() {
         solid: true
     });
     var stoneID = noa.registry.registerBlock(2, { material: 'stone' });
-    roomFloorID = noa.registry.registerBlock(3, { material: 'roomFloor' });
-    corridorEastID = noa.registry.registerBlock(4, { material: 'corridorEast' });
+    roomFloorID = noa.registry.registerBlock(3, { 
+        material: ['roomFloor', 'floorStripes'], // [top/bottom, sides]
+        opaque: false // Due to stripes transparency
+    });
+    corridorEastID = noa.registry.registerBlock(4, { 
+        material: ['corridorEast', 'floorStripes'], // [top/bottom, sides]
+        opaque: false // Due to stripes transparency
+    });
     corridorNorthID = noa.registry.registerBlock(5, { 
-        material: 'corridorNorth',
+        material: ['corridorNorth', 'floorStripes'], // [top/bottom, sides]
         opaque: false, // Not fully opaque due to transparency
         solid: true
     });
-    corridorWestID = noa.registry.registerBlock(6, { material: 'corridorWest' });
+    corridorWestID = noa.registry.registerBlock(6, { 
+        material: ['corridorWest', 'floorStripes'], // [top/bottom, sides]
+        opaque: false // Due to stripes transparency
+    });
     // Simple stair block - full cube collision
     var stairID = noa.registry.registerBlock(7, { 
         material: 'stair',
@@ -3015,7 +3035,7 @@ function setupNoaEngine() {
         opaque: false
     });
     slowingFloorID = noa.registry.registerBlock(8, {
-        material: 'slowingFloor',
+        material: ['slowingFloor', 'floorStripes'], // [top/bottom, sides]
         solid: true,
         opaque: false // Not fully opaque due to transparency
     });
