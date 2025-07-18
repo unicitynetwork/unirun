@@ -2825,6 +2825,10 @@ function setupNoaEngine() {
         manuallyControlChunkLoading: false, // Let noa handle chunk loading
         // Enable auto-step for climbing stairs
         playerAutoStep: true,
+        // Disable fog to see the skybox better
+        fogDisabled: true,
+        // Remove clear color to let skybox show
+        // clearColor: [0, 0, 0, 0],
     };
     
     // Create engine
@@ -2832,6 +2836,116 @@ function setupNoaEngine() {
     
     // Note: noa-engine handles chunk loading automatically based on chunkAddDistance
     // We've set it to 10 chunks which should provide good visibility
+    
+    // Create full skybox with textures
+    setTimeout(() => {
+        try {
+            const scene = noa.rendering.getScene();
+            
+            // Set sky color as fallback
+            scene.clearColor = new BABYLON.Color3(0.529, 0.808, 0.922);
+            
+            // Create skybox faces
+            const createSkyboxFace = (name, size, offset, rotation, texturePath) => {
+                const plane = BABYLON.MeshBuilder.CreatePlane(name, { 
+                    size: size,
+                    sideOrientation: BABYLON.Mesh.DOUBLESIDE 
+                }, scene);
+                
+                // Create material with texture
+                const mat = noa.rendering.makeStandardMaterial(name + 'Mat');
+                mat.diffuseTexture = new BABYLON.Texture(texturePath, scene);
+                mat.emissiveTexture = mat.diffuseTexture;
+                mat.emissiveColor = new BABYLON.Color3(1, 1, 1);
+                mat.diffuseColor = new BABYLON.Color3(1, 1, 1);
+                mat.specularColor = new BABYLON.Color3(0, 0, 0);
+                mat.backFaceCulling = false;
+                
+                plane.material = mat;
+                plane.rotation = rotation;
+                
+                // Create entity for this face
+                const entity = noa.entities.add(
+                    [0, 0, 0],
+                    1, 1,
+                    null,
+                    null,
+                    false,
+                    false
+                );
+                
+                noa.entities.addComponent(entity, noa.entities.names.mesh, {
+                    mesh: plane,
+                    offset: [0, 0, 0]
+                });
+                
+                return { plane, entity, offset };
+            };
+            
+            // Distance from camera
+            const distance = 300;
+            
+            // Create all 6 faces
+            const skyboxFaces = [
+                // North (front) - positive Z
+                createSkyboxFace('skyNorth', distance * 2, 
+                    new BABYLON.Vector3(0, 0, distance),
+                    new BABYLON.Vector3(0, Math.PI, 0),
+                    '/assets/unirun_skybox_north.png'),
+                
+                // South (back) - negative Z (using north texture since no south)
+                createSkyboxFace('skySouth', distance * 2,
+                    new BABYLON.Vector3(0, 0, -distance),
+                    new BABYLON.Vector3(0, 0, 0),
+                    '/assets/unirun_skybox_north.png'),
+                
+                // East (right) - positive X
+                createSkyboxFace('skyEast', distance * 2,
+                    new BABYLON.Vector3(distance, 0, 0),
+                    new BABYLON.Vector3(0, -Math.PI/2, 0),
+                    '/assets/unirun_skybox_east.png'),
+                
+                // West (left) - negative X
+                createSkyboxFace('skyWest', distance * 2,
+                    new BABYLON.Vector3(-distance, 0, 0),
+                    new BABYLON.Vector3(0, Math.PI/2, 0),
+                    '/assets/unirun_skybox_west.png'),
+                
+                // Top (sky) - positive Y
+                createSkyboxFace('skyTop', distance * 2,
+                    new BABYLON.Vector3(0, distance, 0),
+                    new BABYLON.Vector3(Math.PI/2, 0, 0),
+                    '/assets/unirun_skybox_sky.png'),
+                
+                // Bottom (ground) - negative Y
+                createSkyboxFace('skyBottom', distance * 2,
+                    new BABYLON.Vector3(0, -distance, 0),
+                    new BABYLON.Vector3(-Math.PI/2, 0, 0),
+                    '/assets/unirun_skybox_ground.png')
+            ];
+            
+            // Make all faces follow the camera
+            setInterval(() => {
+                if (noa.camera) {
+                    const cameraPos = noa.camera.getPosition();
+                    
+                    skyboxFaces.forEach(face => {
+                        const pos = [
+                            cameraPos[0] + face.offset.x,
+                            cameraPos[1] + face.offset.y,
+                            cameraPos[2] + face.offset.z
+                        ];
+                        noa.entities.setPosition(face.entity, pos);
+                    });
+                }
+            }, 16); // 60 FPS
+            
+            console.log('Created full skybox with 6 textured faces');
+            
+        } catch (error) {
+            console.error('Error creating skybox:', error);
+        }
+    }, 1500); // Delay to ensure engine is fully initialized
     
     // Log default camera parameters
     
@@ -2986,7 +3100,7 @@ function setupNoaEngine() {
     }
     
     // Add a red cylinder mesh to the player
-    const scene = noa.rendering.getScene();
+    // Scene already declared above for skybox
     
     // Create a red cylinder using Babylon.js (should be available globally)
     const cylinder = BABYLON.MeshBuilder.CreateCylinder('playerCylinder', {
