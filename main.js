@@ -4900,7 +4900,8 @@ function setupNoaEngine() {
                 // Only create mesh if within reasonable distance
                 if (distanceSq <= maxRenderDistanceSq * 4) { // Larger distance for banners
                     // Calculate color based on Z position (gradually from green to red)
-                    const progress = Math.min(bannerData.startZ / (250 * 32), 1); // 250 chunks * 32 blocks per chunk
+                    const targetZ = 250 * 32; // 250 chunks * 32 blocks = 8000 blocks
+                    const progress = Math.min(Math.max(bannerData.startZ / targetZ, 0), 1);
                     const red = progress;
                     const green = 1 - progress;
                     
@@ -4927,10 +4928,32 @@ function setupNoaEngine() {
                     
                     // Create banner material with color gradient
                     const bannerMaterial = new BABYLON.StandardMaterial(`${bannerData.meshName}_mat`, scene);
-                    bannerMaterial.diffuseColor = new BABYLON.Color3(red, green, 0);
-                    bannerMaterial.emissiveColor = new BABYLON.Color3(red * 0.3, green * 0.3, 0);
+                    bannerMaterial.diffuseColor = new BABYLON.Color3(1, 1, 1); // White to show texture properly
+                    bannerMaterial.emissiveColor = new BABYLON.Color3(red * 0.8, green * 0.8, 0); // Strong emissive for color
                     bannerMaterial.alpha = 0.5; // Half transparent
                     bannerMaterial.backFaceCulling = false;
+                    
+                    // Create dynamic texture for displaying Z position with colored background
+                    const dynamicTexture = new BABYLON.DynamicTexture(`${bannerData.meshName}_texture`, {width: 512, height: 256}, scene);
+                    const textureContext = dynamicTexture.getContext();
+                    
+                    // Fill background with the gradient color
+                    textureContext.fillStyle = `rgb(${Math.floor(red * 255)}, ${Math.floor(green * 255)}, 0)`;
+                    textureContext.fillRect(0, 0, 512, 256);
+                    
+                    // Draw Z position on texture
+                    textureContext.font = "bold 80px Arial";
+                    textureContext.fillStyle = "white";
+                    textureContext.strokeStyle = "black";
+                    textureContext.lineWidth = 4;
+                    textureContext.textAlign = "center";
+                    textureContext.textBaseline = "middle";
+                    textureContext.strokeText(`Z: ${bannerData.startZ}`, 256, 128);
+                    textureContext.fillText(`Z: ${bannerData.startZ}`, 256, 128);
+                    dynamicTexture.update();
+                    
+                    bannerMaterial.diffuseTexture = dynamicTexture;
+                    bannerMaterial.diffuseTexture.hasAlpha = true;
                     
                     bannerMesh.material = bannerMaterial;
                     
@@ -4965,7 +4988,7 @@ function setupNoaEngine() {
                 }
             }
             
-            // Update visibility for existing banner mesh
+            // Update visibility and color for existing banner mesh
             if (noa.entities.hasComponent(bannerEntity, noa.entities.names.mesh)) {
                 const meshData = noa.entities.getMeshData(bannerEntity);
                 if (meshData && meshData.mesh) {
@@ -4974,6 +4997,50 @@ function setupNoaEngine() {
                     const distanceSq = dx * dx + dz * dz;
                     
                     meshData.mesh.setEnabled(distanceSq <= maxRenderDistanceSq * 4);
+                    
+                    // Update banner color based on its absolute Z position
+                    if (meshData.mesh.isEnabled()) {
+                        // Use the banner's actual Z position to calculate color
+                        const bannerWorldZ = bannerData.startZ;
+                        const targetZ = 250 * 32; // 250 chunks * 32 blocks = 8000 blocks
+                        const progress = Math.min(Math.max(bannerWorldZ / targetZ, 0), 1);
+                        const red = progress;
+                        const green = 1 - progress;
+                        
+                        // Update material colors
+                        if (meshData.mesh.material) {
+                            // Update emissive color
+                            meshData.mesh.material.emissiveColor.r = red * 0.8;
+                            meshData.mesh.material.emissiveColor.g = green * 0.8;
+                            meshData.mesh.material.emissiveColor.b = 0;
+                            
+                            // Update the texture to reflect new color
+                            if (meshData.mesh.material.diffuseTexture && meshData.mesh.material.diffuseTexture.getContext) {
+                                const textureContext = meshData.mesh.material.diffuseTexture.getContext();
+                                
+                                // Fill background with the new gradient color
+                                textureContext.fillStyle = `rgb(${Math.floor(red * 255)}, ${Math.floor(green * 255)}, 0)`;
+                                textureContext.fillRect(0, 0, 512, 256);
+                                
+                                // Redraw Z position text
+                                textureContext.font = "bold 80px Arial";
+                                textureContext.fillStyle = "white";
+                                textureContext.strokeStyle = "black";
+                                textureContext.lineWidth = 4;
+                                textureContext.textAlign = "center";
+                                textureContext.textBaseline = "middle";
+                                textureContext.strokeText(`Z: ${bannerWorldZ}`, 256, 128);
+                                textureContext.fillText(`Z: ${bannerWorldZ}`, 256, 128);
+                                
+                                meshData.mesh.material.diffuseTexture.update();
+                            }
+                            
+                            // Log every 60 frames to avoid spam
+                            if (visibilityUpdateCounter % 60 === 0) {
+                                console.log(`Updating banner at Z=${bannerWorldZ}, progress=${progress.toFixed(3)}, red=${red.toFixed(2)}, green=${green.toFixed(2)}`);
+                            }
+                        }
+                    }
                 }
             }
         });
