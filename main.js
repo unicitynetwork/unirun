@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00129'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00130'; // Version for chunk token ID generation
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -42,6 +42,7 @@ let backpacks = new Map(); // Track all backpacks in the world: key = "x,z", val
 let backpackData = new Map(); // Persistent backpack data: key = "x,z", value = {position, lostCoins, etc}
 let totalDistanceTraveled = 0; // Track total distance traveled north
 let playerStartZ = null; // Track initial Z position
+let isPaused = false; // Track game pause state
 
 // Coin inventory tracking
 let confirmedURCBalance = 0; // Confirmed balance from minted tokens
@@ -3293,14 +3294,14 @@ function setupNoaEngine() {
         backpacksToSpawn.forEach(({ key, data }) => {
             console.log(`Recreating backpack at ${key} in newly loaded chunk`);
             
-            // Create backpack entity
+            // Create backpack entity without physics
             const backpackEntity = noa.entities.add(
                 data.position,
                 1.0, // width
                 1.2, // height
                 null, // mesh will be added later
                 [0, 0, 0], // meshOffset
-                false, // no physics for recreated backpacks (they already settled)
+                false, // no physics
                 false  // shadow
             );
             
@@ -4232,6 +4233,34 @@ function setupNoaEngine() {
         }
     }, 100); // Check 10 times per second
     
+    // Check backpacks and remove those that fall into void
+    setInterval(() => {
+        if (!noa) return;
+        
+        const toRemove = [];
+        backpacks.forEach((entity, key) => {
+            if (noa.entities.hasComponent(entity, noa.entities.names.position)) {
+                const pos = noa.entities.getPosition(entity);
+                
+                // Remove backpack if it falls below y=-50
+                if (pos[1] < -50) {
+                    console.log(`Removing backpack at ${key} - fell into void (y=${pos[1]})`);
+                    toRemove.push(key);
+                }
+            }
+        });
+        
+        // Remove fallen backpacks
+        toRemove.forEach(key => {
+            const entity = backpacks.get(key);
+            if (entity && noa.entities.hasComponent(entity, noa.entities.names.mesh)) {
+                noa.entities.deleteEntity(entity);
+            }
+            backpacks.delete(key);
+            backpackData.delete(key); // Also remove persistent data
+        });
+    }, 1000); // Check every second
+    
     // Track slowing floor state
     let isSlowed = false;
     let baseMaxSpeed = null;
@@ -4798,6 +4827,9 @@ function setupNoaEngine() {
     // Set up touch controls for mobile devices
     setupTouchControls();
     
+    // Set up pause functionality with P key
+    setupPauseControls();
+    
     // Configure jump settings to prevent flying and limit jump height
     const movement = noa.entities.getMovement(noa.playerEntity);
     movement.airJumps = 0;  // No jumping while in air - prevents double jumping/flying
@@ -5271,6 +5303,7 @@ function startDroneAI() {
     
     setInterval(() => {
         if (!droneEntity || !noa.entities.hasComponent(droneEntity, noa.entities.names.position)) return;
+        if (isPaused) return; // Skip AI update when paused
         
         const playerPos = noa.entities.getPosition(noa.playerEntity);
         const dronePos = noa.entities.getPosition(droneEntity);
@@ -5432,6 +5465,7 @@ function fireProjectile(fromPos, toPos) {
 setInterval(() => {
     // Skip if engine not initialized yet
     if (!noa || !noa.playerEntity) return;
+    if (isPaused) return; // Skip projectile updates when paused
     
     const currentTime = Date.now();
     const playerPos = noa.entities.getPosition(noa.playerEntity);
@@ -5532,31 +5566,70 @@ function handlePlayerDeath(reason = 'Unknown') {
         
         // Calculate backpack spawn position - 3 to 6 blocks north of death position
         const northOffset = 3 + Math.random() * 3; // Random between 3 and 6 blocks
-        const backpackSpawnPos = [
+        let backpackSpawnPos = [
             playerPos[0],
             playerPos[1] + 1.5, // Higher spawn to avoid getting stuck in floor
             playerPos[2] + northOffset // Positive Z is north
         ];
         
-        // Check what blocks are at the spawn position
-        const checkY = Math.floor(backpackSpawnPos[1]);
-        const blockAtSpawn = noa.world.getBlockID(
-            Math.floor(backpackSpawnPos[0]),
-            checkY - 1,
-            Math.floor(backpackSpawnPos[2])
-        );
-        console.log(`Backpack spawn check - Block at spawn position (y=${checkY-1}): ${blockAtSpawn}, spawn pos: ${backpackSpawnPos}`);
+        // Find solid ground for the backpack
+        let foundGround = false;
+        let checkY = Math.floor(backpackSpawnPos[1]);
         
-        // Check if we have solid ground at spawn position
-        const groundCheck = noa.world.getBlockID(
-            Math.floor(backpackSpawnPos[0]),
-            Math.floor(backpackSpawnPos[1]) - 1,
-            Math.floor(backpackSpawnPos[2])
-        );
+        // Check downward for solid ground (up to 10 blocks)
+        for (let y = checkY; y >= checkY - 10; y--) {
+            const blockBelow = noa.world.getBlockID(
+                Math.floor(backpackSpawnPos[0]),
+                y - 1,
+                Math.floor(backpackSpawnPos[2])
+            );
+            
+            if (blockBelow !== 0) { // Found solid ground
+                backpackSpawnPos[1] = y + 0.1; // Place backpack just above the ground
+                foundGround = true;
+                console.log(`Found solid ground for backpack at y=${y-1}, block type: ${blockBelow}`);
+                break;
+            }
+        }
         
-        console.log(`Backpack spawn ground check: block at Y-1 = ${groundCheck}`);
+        // If no ground found, try to place it at the player's death position
+        if (!foundGround) {
+            console.log(`No ground found north of death position, checking at death position`);
+            checkY = Math.floor(playerPos[1]);
+            
+            for (let y = checkY; y >= checkY - 10; y--) {
+                const blockBelow = noa.world.getBlockID(
+                    Math.floor(playerPos[0]),
+                    y - 1,
+                    Math.floor(playerPos[2])
+                );
+                
+                if (blockBelow !== 0) { // Found solid ground
+                    backpackSpawnPos = [
+                        playerPos[0],
+                        y + 0.1, // Place just above ground
+                        playerPos[2]
+                    ];
+                    foundGround = true;
+                    console.log(`Found solid ground at death position, y=${y-1}, block type: ${blockBelow}`);
+                    break;
+                }
+            }
+        }
         
-        // Always use the calculated spawn position
+        // If still no ground, don't spawn backpack
+        if (!foundGround) {
+            console.error(`Cannot spawn backpack - no solid ground found near death position`);
+            // Still clear the coins but don't create entity
+            confirmedURCBalance = 0;
+            pendingURCBalance = 0;
+            playerCoins = 0;
+            updateCoinDisplay();
+            return;
+        }
+        
+        console.log(`Backpack spawn position: ${backpackSpawnPos}`);
+        
         let finalSpawnPos = backpackSpawnPos;
         
         // Create backpack entity at offset position
@@ -5566,7 +5639,7 @@ function handlePlayerDeath(reason = 'Unknown') {
             1.2, // height - increased for visibility
             null, // mesh (will be added later)
             [0, 0, 0], // meshOffset
-            true, // doPhysics - enable physics for backpack
+            false, // doPhysics - no physics for backpack
             false  // shadow
         );
         
@@ -5575,18 +5648,7 @@ function handlePlayerDeath(reason = 'Unknown') {
             return;
         }
         
-        // Add physics to make it fall and slide
-        const backpackPhysics = noa.entities.getPhysics(backpackEntity);
-        if (backpackPhysics && backpackPhysics.body) {
-            // Apply northward velocity plus player's lateral velocity
-            backpackPhysics.body.velocity[0] = velocity[0] * 0.5; // Lateral movement
-            backpackPhysics.body.velocity[1] = 3; // Upward arc
-            backpackPhysics.body.velocity[2] = -5; // Strong northward push
-            
-            // Set friction to allow sliding
-            backpackPhysics.body.friction = 0.4;
-            backpackPhysics.body.restitution = 0.2; // Small bounce
-        }
+        // No physics - backpack stays where placed
         
         // Create mesh immediately
         const backpackInstance = backpackMesh.createInstance('backpack_' + Date.now());
@@ -5678,6 +5740,148 @@ function handlePlayerDeath(reason = 'Unknown') {
         deathScreen.addEventListener('click', deathScreenClickHandler);
         deathScreen.addEventListener('touchend', deathScreenClickHandler);
     }
+}
+
+// Set up pause controls with P key
+function setupPauseControls() {
+    // Store original update functions
+    let originalBeforeRender = null;
+    let originalTick = null;
+    let pausedVelocities = new Map(); // Store velocities when pausing
+    
+    // Listen for P key to toggle pause
+    document.addEventListener('keydown', (e) => {
+        if (e.code === 'KeyP' && !isPlayerDead) {
+            e.preventDefault();
+            isPaused = !isPaused;
+            
+            if (isPaused) {
+                console.log('Game PAUSED - Press P to resume');
+                
+                // Stop player movement
+                if (noa && noa.playerEntity) {
+                    const movement = noa.entities.getMovement(noa.playerEntity);
+                    if (movement) {
+                        movement.running = false;
+                    }
+                    // Disable all input
+                    noa.inputs.state.forward = false;
+                    noa.inputs.state.backward = false;
+                    noa.inputs.state.left = false;
+                    noa.inputs.state.right = false;
+                    noa.inputs.state.jump = false;
+                    
+                    // Store and freeze player physics
+                    const physics = noa.entities.getPhysics(noa.playerEntity);
+                    if (physics && physics.body) {
+                        pausedVelocities.set('player', [...physics.body.velocity]);
+                        physics.body.velocity = [0, 0, 0];
+                        physics.body.sleepTimeLimit = 0;
+                    }
+                }
+                
+                // Freeze drone
+                if (droneEntity && noa.entities.hasComponent(droneEntity, noa.entities.names.position)) {
+                    const physics = noa.entities.getPhysics(droneEntity);
+                    if (physics && physics.body) {
+                        pausedVelocities.set('drone', [...physics.body.velocity]);
+                        physics.body.velocity = [0, 0, 0];
+                        physics.body.sleepTimeLimit = 0;
+                    }
+                }
+                
+                // Freeze all projectiles
+                projectiles.forEach((proj, index) => {
+                    if (noa.entities.hasComponent(proj.entity, noa.entities.names.position)) {
+                        const physics = noa.entities.getPhysics(proj.entity);
+                        if (physics && physics.body) {
+                            pausedVelocities.set(`projectile_${index}`, [...physics.body.velocity]);
+                            physics.body.velocity = [0, 0, 0];
+                            physics.body.sleepTimeLimit = 0;
+                        }
+                    }
+                });
+                
+                // Show pause indicator
+                const pauseDiv = document.createElement('div');
+                pauseDiv.id = 'pauseIndicator';
+                pauseDiv.style.cssText = `
+                    position: fixed;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                    background: rgba(0, 0, 0, 0.8);
+                    color: white;
+                    padding: 20px 40px;
+                    font-family: sans-serif;
+                    font-size: 48px;
+                    font-weight: bold;
+                    border-radius: 10px;
+                    z-index: 9999;
+                    pointer-events: none;
+                `;
+                pauseDiv.textContent = 'PAUSED';
+                document.body.appendChild(pauseDiv);
+                
+            } else {
+                console.log('Game RESUMED');
+                
+                // Restore player physics
+                if (noa && noa.playerEntity) {
+                    const physics = noa.entities.getPhysics(noa.playerEntity);
+                    if (physics && physics.body && pausedVelocities.has('player')) {
+                        physics.body.velocity = pausedVelocities.get('player');
+                        physics.body.sleepTimeLimit = -1;
+                    }
+                }
+                
+                // Restore drone physics
+                if (droneEntity && noa.entities.hasComponent(droneEntity, noa.entities.names.position)) {
+                    const physics = noa.entities.getPhysics(droneEntity);
+                    if (physics && physics.body && pausedVelocities.has('drone')) {
+                        physics.body.velocity = pausedVelocities.get('drone');
+                        physics.body.sleepTimeLimit = -1;
+                    }
+                }
+                
+                // Restore projectile physics
+                projectiles.forEach((proj, index) => {
+                    if (noa.entities.hasComponent(proj.entity, noa.entities.names.position)) {
+                        const physics = noa.entities.getPhysics(proj.entity);
+                        const key = `projectile_${index}`;
+                        if (physics && physics.body && pausedVelocities.has(key)) {
+                            physics.body.velocity = pausedVelocities.get(key);
+                            physics.body.sleepTimeLimit = -1;
+                        }
+                    }
+                });
+                
+                // Clear stored velocities
+                pausedVelocities.clear();
+                
+                // Remove pause indicator
+                const pauseDiv = document.getElementById('pauseIndicator');
+                if (pauseDiv) {
+                    pauseDiv.remove();
+                }
+            }
+        }
+    });
+    
+    // Override input handling during pause
+    const originalBindings = {};
+    ['forward', 'backward', 'left', 'right', 'jump'].forEach(action => {
+        const original = noa.inputs.state[action];
+        Object.defineProperty(noa.inputs.state, action, {
+            get: function() {
+                return isPaused ? false : this['_' + action];
+            },
+            set: function(value) {
+                this['_' + action] = value;
+            }
+        });
+        noa.inputs.state['_' + action] = original;
+    });
 }
 
 // Set up touch controls for mobile devices
