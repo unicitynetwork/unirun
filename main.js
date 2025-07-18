@@ -2982,7 +2982,16 @@ function setupNoaEngine() {
     });
     noa.registry.registerMaterial('corridorWest', { color: corridorWestColor });
     noa.registry.registerMaterial('stair', { color: stairColor });
-    noa.registry.registerMaterial('slowingFloor', { color: slowingFloorColor });
+    // Create custom material for slowing floor blocks with transparency support
+    var slowingMat = noa.rendering.makeStandardMaterial('slowingMat');
+    var slowingTex = new BABYLON.Texture('/assets/unirun_slower.png', scene);
+    slowingMat.diffuseTexture = slowingTex;
+    slowingMat.opacityTexture = slowingTex; // Use texture's alpha channel for opacity
+    slowingMat.specularColor = new BABYLON.Color3(0, 0, 0); // No specular for consistent look
+    
+    noa.registry.registerMaterial('slowingFloor', {
+        renderMaterial: slowingMat
+    });
     
     // Register blocks
     var dirtID = noa.registry.registerBlock(1, { 
@@ -3008,7 +3017,7 @@ function setupNoaEngine() {
     slowingFloorID = noa.registry.registerBlock(8, {
         material: 'slowingFloor',
         solid: true,
-        opaque: true
+        opaque: false // Not fully opaque due to transparency
     });
     
     
