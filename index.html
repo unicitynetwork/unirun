@@ -194,17 +194,16 @@
             bottom: 0;
             left: 0;
             width: 100%;
-            height: 120px;
+            height: 200px;
             display: none;
             z-index: 100;
             pointer-events: none;
         }
         #touchControls.show {
-            display: flex;
+            display: block;
         }
         .touchZone {
-            flex: 1;
-            height: 100%;
+            position: absolute;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -221,13 +220,26 @@
             background-color: rgba(255, 255, 255, 0.1);
         }
         .touchZone.left {
+            left: 0;
+            bottom: 0;
+            width: 50%;
+            height: 120px;
             border-right: 1px solid rgba(255, 255, 255, 0.2);
         }
         .touchZone.right {
+            right: 0;
+            bottom: 0;
+            width: 50%;
+            height: 120px;
             border-left: 1px solid rgba(255, 255, 255, 0.2);
         }
-        .touchZone.center {
+        .touchZone.jump {
+            left: 0;
+            bottom: 120px;
+            width: 100%;
+            height: 80px;
             background-color: rgba(255, 255, 255, 0.05);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
         }
     </style>
 </head>
@@ -270,8 +282,8 @@
     </div>
     <div id="touchControls">
         <div class="touchZone left" data-action="left">←</div>
-        <div class="touchZone center" data-action="jump">↑</div>
         <div class="touchZone right" data-action="right">→</div>
+        <div class="touchZone jump" data-action="jump">↑ JUMP</div>
     </div>
     <script src="/unicity-sdk.js"></script>
     <script type="module" src="/main.js"></script>
