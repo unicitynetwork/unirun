@@ -4928,24 +4928,24 @@ function setupNoaEngine() {
                     
                     // Create banner material with color gradient
                     const bannerMaterial = new BABYLON.StandardMaterial(`${bannerData.meshName}_mat`, scene);
-                    bannerMaterial.diffuseColor = new BABYLON.Color3(0.7, 0.7, 0.7); // Darker diffuse to darken texture
-                    bannerMaterial.emissiveColor = new BABYLON.Color3(red * 0.2, green * 0.2, 0); // Much less emissive for darker appearance
-                    bannerMaterial.alpha = 0.5; // Back to half transparent
+                    bannerMaterial.diffuseColor = new BABYLON.Color3(1, 1, 1); // White to show texture properly
+                    bannerMaterial.emissiveColor = new BABYLON.Color3(red * 0.5, green * 0.5, 0); // Original emissive strength
+                    bannerMaterial.alpha = 0.5; // Half transparent
                     bannerMaterial.backFaceCulling = false;
                     
                     // Create dynamic texture for displaying Z position with colored background
                     const dynamicTexture = new BABYLON.DynamicTexture(`${bannerData.meshName}_texture`, {width: 512, height: 256}, scene);
                     const textureContext = dynamicTexture.getContext();
                     
-                    // Fill background with darker gradient color
-                    textureContext.fillStyle = `rgb(${Math.floor(red * 180)}, ${Math.floor(green * 180)}, 0)`;
+                    // Fill background with dark gradient color
+                    textureContext.fillStyle = `rgb(${Math.floor(red * 80)}, ${Math.floor(green * 80)}, 0)`;
                     textureContext.fillRect(0, 0, 512, 256);
                     
                     // Draw Z position on texture with bright colors
                     textureContext.font = "bold 80px Arial";
-                    textureContext.fillStyle = "#FFFF00"; // Bright yellow
-                    textureContext.strokeStyle = "#FF00FF"; // Bright magenta outline
-                    textureContext.lineWidth = 6;
+                    textureContext.fillStyle = "#00FFFF"; // Bright cyan
+                    textureContext.strokeStyle = "#FFFFFF"; // White outline
+                    textureContext.lineWidth = 3;
                     textureContext.textAlign = "center";
                     textureContext.textBaseline = "middle";
                     textureContext.strokeText(`Z: ${bannerData.startZ}`, 256, 128);
@@ -5010,23 +5010,23 @@ function setupNoaEngine() {
                         // Update material colors
                         if (meshData.mesh.material) {
                             // Update emissive color
-                            meshData.mesh.material.emissiveColor.r = red * 0.2;
-                            meshData.mesh.material.emissiveColor.g = green * 0.2;
+                            meshData.mesh.material.emissiveColor.r = red * 0.5;
+                            meshData.mesh.material.emissiveColor.g = green * 0.5;
                             meshData.mesh.material.emissiveColor.b = 0;
                             
                             // Update the texture to reflect new color
                             if (meshData.mesh.material.diffuseTexture && meshData.mesh.material.diffuseTexture.getContext) {
                                 const textureContext = meshData.mesh.material.diffuseTexture.getContext();
                                 
-                                // Fill background with darker gradient color
-                                textureContext.fillStyle = `rgb(${Math.floor(red * 180)}, ${Math.floor(green * 180)}, 0)`;
+                                // Fill background with dark gradient color
+                                textureContext.fillStyle = `rgb(${Math.floor(red * 80)}, ${Math.floor(green * 80)}, 0)`;
                                 textureContext.fillRect(0, 0, 512, 256);
                                 
                                 // Redraw Z position text with bright colors
                                 textureContext.font = "bold 80px Arial";
-                                textureContext.fillStyle = "#FFFF00"; // Bright yellow
-                                textureContext.strokeStyle = "#FF00FF"; // Bright magenta outline
-                                textureContext.lineWidth = 6;
+                                textureContext.fillStyle = "#00FFFF"; // Bright cyan
+                                textureContext.strokeStyle = "#FFFFFF"; // White outline
+                                textureContext.lineWidth = 3;
                                 textureContext.textAlign = "center";
                                 textureContext.textBaseline = "middle";
                                 textureContext.strokeText(`Z: ${bannerWorldZ}`, 256, 128);
