@@ -2951,7 +2951,16 @@ function setupNoaEngine() {
     var stairColor = [0.5, 0.5, 0.7]; // Light blue for stairs
     var slowingFloorColor = [0.5, 0.2, 0.5]; // Purple for slowing floors
     
-    noa.registry.registerMaterial('dirt', { color: brownish });
+    // Create custom material for dirt/wall blocks with transparency support
+    var wallMat = noa.rendering.makeStandardMaterial('wallMat');
+    var wallTex = new BABYLON.Texture('/assets/wall_unirun.png', scene);
+    wallMat.diffuseTexture = wallTex;
+    wallMat.opacityTexture = wallTex; // Use texture's alpha channel for opacity
+    wallMat.specularColor = new BABYLON.Color3(0, 0, 0); // No specular for consistent look
+    
+    noa.registry.registerMaterial('dirt', {
+        renderMaterial: wallMat
+    });
     noa.registry.registerMaterial('stone', { color: grayish });
     noa.registry.registerMaterial('roomFloor', { color: roomFloorColor });
     noa.registry.registerMaterial('corridorEast', { color: corridorEastColor });
@@ -2976,7 +2985,11 @@ function setupNoaEngine() {
     noa.registry.registerMaterial('slowingFloor', { color: slowingFloorColor });
     
     // Register blocks
-    var dirtID = noa.registry.registerBlock(1, { material: 'dirt' });
+    var dirtID = noa.registry.registerBlock(1, { 
+        material: 'dirt',
+        opaque: false, // Not fully opaque due to transparency
+        solid: true
+    });
     var stoneID = noa.registry.registerBlock(2, { material: 'stone' });
     roomFloorID = noa.registry.registerBlock(3, { material: 'roomFloor' });
     corridorEastID = noa.registry.registerBlock(4, { material: 'corridorEast' });
