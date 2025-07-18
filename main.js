@@ -3596,8 +3596,8 @@ function setupNoaEngine() {
                 const worldX = x + i;
                 const worldZ = z + k;
                 
-                // Check if this position should have a pillar (every 128 blocks)
-                const shouldHavePillar = (worldZ % 128) === 0;
+                // Check if this position should have a pillar (every 150 blocks)
+                const shouldHavePillar = (worldZ % 150) === 0;
                 
                 if (shouldHavePillar) {
                     // Check for east/west corridors at ground level (y=0)
@@ -3656,14 +3656,14 @@ function setupNoaEngine() {
         }
         
         // Fourth pass: Create banners between pillars
-        // Banners span from one pillar location to the next (128 blocks)
+        // Banners span from one pillar location to the next (150 blocks)
         for (let i = 0; i < chunkSize; i++) {
             for (let k = 0; k < chunkSize; k++) {
                 const worldX = x + i;
                 const worldZ = z + k;
                 
                 // Check if this is a pillar position
-                if ((worldZ % 128) === 0) {
+                if ((worldZ % 150) === 0) {
                     // Check for corridors that should have banners
                     
                     // East/West corridors
