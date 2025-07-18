@@ -5660,6 +5660,11 @@ function setupNoaEngine() {
     // Set up touch controls for mobile devices
     setupTouchControls();
     
+    // Re-check mobile status on window resize
+    window.addEventListener('resize', () => {
+        setupTouchControls();
+    });
+    
     // Set up pause functionality with P key
     setupPauseControls();
     
@@ -6751,20 +6756,31 @@ function setupPauseControls() {
 
 // Set up touch controls for mobile devices
 function setupTouchControls() {
-    // Detect if we're on a touch device
-    const isTouchDevice = ('ontouchstart' in window) || 
-                         (navigator.maxTouchPoints > 0) || 
-                         (navigator.msMaxTouchPoints > 0);
+    // Detect if we're on a mobile device (not just touch-capable)
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+                     (window.innerWidth <= 768 && 'ontouchstart' in window);
     
     const touchControls = document.getElementById('touchControls');
     if (!touchControls) return;
     
-    // Show controls on touch devices
-    if (isTouchDevice) {
+    // Show controls on mobile devices only
+    if (isMobile) {
         touchControls.classList.add('show');
+        console.log('Mobile device detected - touch controls enabled');
+        
+        // Only attach event listeners if not already attached
+        if (!touchControls.hasAttribute('data-listeners-attached')) {
+            attachTouchEventListeners(touchControls);
+            touchControls.setAttribute('data-listeners-attached', 'true');
+        }
+    } else {
+        touchControls.classList.remove('show');
+        console.log('Desktop device detected - touch controls disabled');
     }
-    
-    // Handle touch events
+}
+
+// Separate function to attach touch event listeners
+function attachTouchEventListeners(touchControls) {
     const touchZones = touchControls.querySelectorAll('.touchZone');
     touchZones.forEach(zone => {
         const action = zone.getAttribute('data-action');
@@ -6807,8 +6823,10 @@ function setupTouchControls() {
             }
         });
         
-        // Also handle mouse events for testing on desktop
+        // Also handle mouse events for testing on desktop (only if controls are visible)
         zone.addEventListener('mousedown', (e) => {
+            // Skip if controls are not visible
+            if (!touchControls.classList.contains('show')) return;
             e.preventDefault();
             
             if (isPlayerDead) {
@@ -6828,6 +6846,8 @@ function setupTouchControls() {
         });
         
         zone.addEventListener('mouseup', (e) => {
+            // Skip if controls are not visible
+            if (!touchControls.classList.contains('show')) return;
             e.preventDefault();
             
             if (action === 'left') {

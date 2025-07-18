@@ -215,6 +215,8 @@
             pointer-events: auto;
             cursor: pointer;
             transition: background-color 0.1s;
+            background-repeat: no-repeat;
+            background-size: 60px 60px;
         }
         .touchZone:active {
             background-color: rgba(255, 255, 255, 0.1);
@@ -225,6 +227,8 @@
             width: 50%;
             height: 120px;
             border-right: 1px solid rgba(255, 255, 255, 0.2);
+            background-image: url('/assets/unirun_arrow.png');
+            background-position: 20px center;
         }
         .touchZone.right {
             right: 0;
@@ -232,14 +236,51 @@
             width: 50%;
             height: 120px;
             border-left: 1px solid rgba(255, 255, 255, 0.2);
+            background-image: url('/assets/unirun_arrow.png');
+            background-position: calc(100% - 20px) center;
+            transform: rotate(180deg);
         }
-        .touchZone.jump {
+        .touchZone.jump-left {
             left: 0;
-            bottom: 120px;
-            width: 100%;
-            height: 80px;
-            background-color: rgba(255, 255, 255, 0.05);
-            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            bottom: 80px;
+            width: 50%;
+            height: 120px;
+            background: transparent;
+            z-index: 101;
+        }
+        .touchZone.jump-left::before {
+            content: '';
+            position: absolute;
+            width: 60px;
+            height: 60px;
+            left: 20px;
+            top: 20px;
+            background-image: url('/assets/unirun_arrow.png');
+            background-size: 60px 60px;
+            background-repeat: no-repeat;
+            transform: rotate(90deg);
+            pointer-events: none;
+        }
+        .touchZone.jump-right {
+            right: 0;
+            bottom: 80px;
+            width: 50%;
+            height: 120px;
+            background: transparent;
+            z-index: 101;
+        }
+        .touchZone.jump-right::before {
+            content: '';
+            position: absolute;
+            width: 60px;
+            height: 60px;
+            right: 20px;
+            top: 20px;
+            background-image: url('/assets/unirun_arrow.png');
+            background-size: 60px 60px;
+            background-repeat: no-repeat;
+            transform: rotate(90deg);
+            pointer-events: none;
         }
     </style>
 </head>
@@ -281,9 +322,10 @@
         <div class="respawnHint">Press SPACE or tap anywhere to respawn</div>
     </div>
     <div id="touchControls">
-        <div class="touchZone left" data-action="left">←</div>
-        <div class="touchZone right" data-action="right">→</div>
-        <div class="touchZone jump" data-action="jump">↑ JUMP</div>
+        <div class="touchZone left" data-action="left"></div>
+        <div class="touchZone right" data-action="right"></div>
+        <div class="touchZone jump-left" data-action="jump"></div>
+        <div class="touchZone jump-right" data-action="jump"></div>
     </div>
     <script src="/unicity-sdk.js"></script>
     <script type="module" src="/main.js"></script>
