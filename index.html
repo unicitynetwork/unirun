@@ -467,7 +467,17 @@
         <div class="deathTitle">NICE TRY!</div>
         <div class="deathReason" id="deathReason">Killed by drone</div>
         <div class="deathHumor" id="deathHumor"></div>
-        <div class="respawnHint">Press SPACE or tap anywhere to respawn</div>
+        <div class="respawnHint" id="respawnHint">Press SPACE or tap anywhere to respawn</div>
+        <div id="mintingProgress" style="
+            display: none;
+            margin-top: 20px;
+            font-family: sans-serif;
+            font-size: 18px;
+            color: #ffcc00;
+        ">
+            <div>Creating new player token...</div>
+            <div style="margin-top: 10px; font-size: 14px; color: #888;" id="mintingStatus">Initializing...</div>
+        </div>
         <div style="margin-top: 20px;">
             <button id="viewStatsBtn" style="
                 background: rgba(0, 255, 136, 0.2);
@@ -488,6 +498,24 @@
         <div class="statsContainer">
             <div class="statsTitle">PLAYER STATISTICS</div>
             
+            <div id="initialMintingProgress" style="
+                display: none;
+                text-align: center;
+                padding: 40px;
+                font-family: sans-serif;
+            ">
+                <div style="font-size: 24px; color: #ffcc00; margin-bottom: 20px;">
+                    Creating Your Initial Player Token...
+                </div>
+                <div style="font-size: 16px; color: #888;" id="initialMintingStatus">
+                    Initializing blockchain connection...
+                </div>
+                <div style="margin-top: 40px; font-size: 14px; color: #666;">
+                    This may take a few moments on first run
+                </div>
+            </div>
+            
+            <div id="statsContent">
             <div class="playerNameSection">
                 <div class="playerNameLabel">Player Name</div>
                 <input type="text" id="playerNameInput" value="Anonymous Runner" maxlength="20">
@@ -544,6 +572,7 @@
             </div>
             
             <div class="closeStats">Press P to resume or SPACE to start new game</div>
+            </div>
         </div>
     </div>
     <div id="touchControls">

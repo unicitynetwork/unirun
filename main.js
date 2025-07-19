@@ -108,7 +108,7 @@ let chunkNeighbors = new Map(); // Pre-computed neighbor chunks: key = "chunkX,c
 let playerCoins = 0; // Player's coin balance (temporary counter)
 let isPlayerDead = false; // Track if player is dead
 let deathReason = ''; // Track how the player died
-let deathScreenTimer = 0; // Track time since death screen shown
+let isCreatingNewToken = false; // Track if we're creating a new token
 let backpacks = new Map(); // Track all backpacks in the world: key = "x,z", value = entity
 let backpackData = new Map(); // Persistent backpack data: key = "x,z", value = {position, lostCoins, etc}
 let totalDistanceTraveled = 0; // Track total distance traveled north
@@ -715,8 +715,10 @@ async function initializeGame() {
     // Set up noa engine
     setupNoaEngine();
     
-    // Start periodic state updates
-    startPeriodicUpdates();
+    // Don't start periodic updates if game is paused (on stats screen)
+    if (!isPaused) {
+        startPeriodicUpdates();
+    }
 }
 
 // Seeded random number generator with better distribution
@@ -2955,6 +2957,22 @@ async function initializePlayerToken() {
 
 // Create a new player token
 async function createNewPlayerToken() {
+    // Show minting progress if on stats screen
+    const statsScreen = document.getElementById('statsScreen');
+    const initialMintingProgress = document.getElementById('initialMintingProgress');
+    const statsContent = document.getElementById('statsContent');
+    const initialMintingStatus = document.getElementById('initialMintingStatus');
+    
+    if (statsScreen && statsScreen.classList.contains('show')) {
+        if (initialMintingProgress) initialMintingProgress.style.display = 'block';
+        if (statsContent) statsContent.style.display = 'none';
+    }
+    
+    // Update minting status
+    if (initialMintingStatus) {
+        initialMintingStatus.textContent = 'Generating cryptographic keys...';
+    }
+    
     // Reset token status for new token
     tokenStatus = {
         initialized: false,
@@ -2983,6 +3001,11 @@ async function createNewPlayerToken() {
     
     // Generate nonce for signing service
     const nonce = crypto.getRandomValues(new Uint8Array(32));
+    
+    // Update minting status
+    if (initialMintingStatus) {
+        initialMintingStatus.textContent = 'Creating signing service...';
+    }
     
     // Create signing service with private key and nonce
     signingService = await window.UnicitySDK.SigningService.createFromSecret(privateKeyBytes, nonce);
@@ -3013,6 +3036,11 @@ async function createNewPlayerToken() {
     // Create aggregator client for Unicity network
     const aggregatorClient = new window.UnicitySDK.AggregatorClient('https://goggregator-test.unicity.network');
     const client = new window.UnicitySDK.StateTransitionClient(aggregatorClient);
+    
+    // Update minting status
+    if (initialMintingStatus) {
+        initialMintingStatus.textContent = 'Preparing token transaction...';
+    }
     
     // Create mint transaction data
     const salt = crypto.getRandomValues(new Uint8Array(32));
@@ -3070,6 +3098,12 @@ async function createNewPlayerToken() {
         tokenStatus.successfulSubmissions = 1;
         tokenStatus.lastUpdateTime = Date.now();
         updateTokenStatusDisplay();
+        
+        // Hide minting progress if on stats screen
+        if (statsScreen && statsScreen.classList.contains('show')) {
+            if (initialMintingProgress) initialMintingProgress.style.display = 'none';
+            if (statsContent) statsContent.style.display = 'block';
+        }
     } catch (error) {
         console.error('Failed to mint token on Unicity network:', error);
         console.error('Error details:', {
@@ -3090,6 +3124,15 @@ async function createNewPlayerToken() {
         tokenStatus.totalSubmissions = 1;
         tokenStatus.lastError = error.message || 'Mint failed';
         updateTokenStatusDisplay();
+        
+        // Show error in minting progress if on stats screen
+        if (statsScreen && statsScreen.classList.contains('show')) {
+            if (initialMintingStatus) {
+                initialMintingStatus.textContent = 'Failed to create token. Press SPACE to continue in offline mode.';
+                initialMintingStatus.style.color = '#ff5555';
+            }
+        }
+        
         throw error;
     }
 }
@@ -4414,18 +4457,7 @@ function setupNoaEngine() {
         const currentTime = Date.now();
         const coinsToRemove = [];
         
-        // Update death screen timer
-        if (deathScreenTimer > 0) {
-            deathScreenTimer -= dt;
-            if (deathScreenTimer <= 0) {
-                deathScreenTimer = 0;
-                // Update hint text to show input is now accepted
-                const respawnHint = document.querySelector('#deathScreen .respawnHint');
-                if (respawnHint) {
-                    respawnHint.style.color = '#ffffff';
-                }
-            }
-        }
+        // No death screen timer needed anymore - handled by token creation
         
         flyingCoins.forEach((flyData, coinEntity) => {
             const elapsed = (currentTime - flyData.startTime) / 1000; // seconds
@@ -5574,8 +5606,14 @@ function setupNoaEngine() {
         
         const pos = noa.entities.getPosition(noa.playerEntity);
         
+        // Debug log when falling
+        if (pos[1] < 0) {
+            console.log(`Player Y position: ${pos[1]}`);
+        }
+        
         // Kill player if they fall below y=-10 into the void
         if (pos[1] < -10) {
+            console.log('Player fell into void! Triggering death...');
             handlePlayerDeath('Fell into the void');
         }
     }, 100); // Check 10 times per second
@@ -6285,8 +6323,8 @@ function startPeriodicUpdates() {
     updateIntervalId = setInterval(async () => {
         if (!noa || !playerToken || !signingService) return;
         
-        // Skip if already updating
-        if (isUpdatingPlayerToken) {
+        // Skip if game is paused, player is dead, or already updating
+        if (isPaused || isPlayerDead || isUpdatingPlayerToken) {
             return;
         }
         
@@ -6299,11 +6337,19 @@ function startPeriodicUpdates() {
             try {
                 const pending = JSON.parse(existingPendingTx);
                 if (pending.submitted) {
-                    tokenStatus.pendingTransaction = true;
-                    tokenStatus.lastError = 'Transaction pending - waiting for completion';
-                    updateTokenStatusDisplay();
-                    isUpdatingPlayerToken = false;
-                    return;
+                    // Check how old this submitted transaction is
+                    const age = Date.now() - pending.timestamp;
+                    if (age > 60000) { // If older than 60 seconds, consider it failed
+                        console.warn(`Clearing stuck pending transaction (age: ${Math.floor(age/1000)}s)`);
+                        localStorage.removeItem(pendingTxKey);
+                        tokenStatus.lastError = 'Previous transaction timed out';
+                    } else {
+                        tokenStatus.pendingTransaction = true;
+                        tokenStatus.lastError = 'Transaction pending - waiting for completion';
+                        updateTokenStatusDisplay();
+                        isUpdatingPlayerToken = false;
+                        return;
+                    }
                 }
             } catch (e) {
                 console.error('Failed to parse existing pending transaction:', e);
@@ -6546,6 +6592,21 @@ function startPeriodicUpdates() {
             tokenStatus.totalSubmissions++;
             tokenStatus.lastError = error.message || 'Transaction failed';
             updateTokenStatusDisplay();
+            
+            // Clear any stuck pending transaction on error
+            const savedPendingTx = localStorage.getItem(pendingTxKey);
+            if (savedPendingTx) {
+                try {
+                    const pending = JSON.parse(savedPendingTx);
+                    if (pending.submitted) {
+                        console.warn('Clearing submitted transaction that failed:', error.message);
+                        localStorage.removeItem(pendingTxKey);
+                        tokenStatus.pendingTransaction = false;
+                    }
+                } catch (e) {
+                    localStorage.removeItem(pendingTxKey);
+                }
+            }
             
             // Check for REQUEST_ID_EXISTS - this means we lost track of a submitted transaction
             if (error.message && error.message.includes('REQUEST_ID_EXISTS')) {
@@ -7231,14 +7292,51 @@ function handlePlayerDeath(reason = 'Unknown') {
         deathHumorElement.textContent = randomMessage;
     }
     
-    // Set death screen timer to 5 seconds
-    deathScreenTimer = 5000;
+    // Start creating new token immediately
+    isCreatingNewToken = true;
     
-    // Gray out respawn hint during timer
-    const respawnHint = document.querySelector('#deathScreen .respawnHint');
+    // Hide respawn hint and show minting progress
+    const respawnHint = document.getElementById('respawnHint');
+    const mintingProgress = document.getElementById('mintingProgress');
+    const mintingStatus = document.getElementById('mintingStatus');
+    
     if (respawnHint) {
-        respawnHint.style.color = '#444444';
+        respawnHint.style.display = 'none';
     }
+    if (mintingProgress) {
+        mintingProgress.style.display = 'block';
+        if (mintingStatus) {
+            mintingStatus.textContent = 'Initializing new token...';
+        }
+    }
+    
+    // Create new token asynchronously
+    createNewPlayerToken().then(() => {
+        console.log('New player token created on death');
+        isCreatingNewToken = false;
+        
+        // Show respawn hint
+        if (respawnHint) {
+            respawnHint.style.display = 'block';
+            respawnHint.style.color = '#888888';
+        }
+        if (mintingProgress) {
+            mintingProgress.style.display = 'none';
+        }
+    }).catch((error) => {
+        console.error('Error creating new player token on death:', error);
+        isCreatingNewToken = false;
+        
+        // Show error state
+        if (mintingStatus) {
+            mintingStatus.textContent = 'Failed to create token. Press SPACE to retry.';
+            mintingStatus.style.color = '#ff5555';
+        }
+        if (respawnHint) {
+            respawnHint.style.display = 'block';
+            respawnHint.style.color = '#888888';
+        }
+    })
     
     // Stop player movement
     if (noa && noa.playerEntity) {
@@ -7256,7 +7354,7 @@ function handlePlayerDeath(reason = 'Unknown') {
     
     // Listen for space key to respawn
     const respawnHandler = (e) => {
-        if (e.code === 'Space' && isPlayerDead && deathScreenTimer <= 0) {
+        if (e.code === 'Space' && isPlayerDead && !isCreatingNewToken) {
             e.preventDefault();
             document.removeEventListener('keydown', respawnHandler);
             respawnPlayer();
@@ -7266,7 +7364,7 @@ function handlePlayerDeath(reason = 'Unknown') {
     
     // Also listen for touch/click on death screen
     const deathScreenClickHandler = (e) => {
-        if (isPlayerDead && deathScreenTimer <= 0) {
+        if (isPlayerDead && !isCreatingNewToken) {
             e.preventDefault();
             document.removeEventListener('keydown', respawnHandler);
             deathScreen.removeEventListener('click', deathScreenClickHandler);
@@ -7467,8 +7565,8 @@ function attachTouchEventListeners(touchControls) {
             e.stopPropagation();
             
             if (isPlayerDead) {
-                // Special handling for respawn (check timer)
-                if (action === 'jump' && deathScreenTimer <= 0) {
+                // Special handling for respawn (check if token is ready)
+                if (action === 'jump' && !isCreatingNewToken) {
                     respawnPlayer();
                 }
                 return;
@@ -7506,7 +7604,7 @@ function attachTouchEventListeners(touchControls) {
             e.preventDefault();
             
             if (isPlayerDead) {
-                if (action === 'jump' && deathScreenTimer <= 0) {
+                if (action === 'jump' && !isCreatingNewToken) {
                     respawnPlayer();
                 }
                 return;
@@ -7552,24 +7650,11 @@ async function respawnPlayer() {
         deathScreen.classList.remove('show');
     }
     
-    // Show loading indicator while creating new token
-    updateTokenStatusDisplay('Creating new player token...');
-    
-    try {
-        // Create new player token
-        await createNewPlayerToken();
-        console.log('New player token created for respawn');
-        
-        // Update token status display
-        updateTokenStatusDisplay();
-        
-        // Start periodic token updates for the new token
-        startPeriodicUpdates();
-        console.log('Started periodic token updates for new token');
-    } catch (error) {
-        console.error('Error creating new player token:', error);
-        updateTokenStatusDisplay('Error creating token. Using offline mode.');
-    }
+    // Token should already be created during death screen
+    // Just start periodic updates
+    updateTokenStatusDisplay();
+    startPeriodicUpdates();
+    console.log('Started periodic token updates for new token');
     
     // Reset health
     currentPlayerHealth = 100;
