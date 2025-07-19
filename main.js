@@ -699,6 +699,32 @@ async function initializeGame() {
         });
     }
     
+    // Handle START button
+    const startGameBtn = document.getElementById('startGameBtn');
+    if (startGameBtn) {
+        startGameBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            // Save player name if changed
+            const playerNameInput = document.getElementById('playerNameInput');
+            if (playerNameInput) {
+                const newName = playerNameInput.value.trim();
+                if (newName && newName !== playerStats.playerName) {
+                    playerStats.playerName = newName;
+                    localStorage.setItem('unicityRunner_playerName', newName);
+                }
+            }
+            
+            // Hide stats screen and start game
+            hideStatsScreen();
+            isPaused = false;
+            
+            // Start the game engine if not already started
+            if (!noa) {
+                setupNoaEngine();
+            }
+        });
+    }
+    
     // Check for gamedev version change and clear chunk tokens if needed
     checkGamedevVersionAndClearChunks();
     

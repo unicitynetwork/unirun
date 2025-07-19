@@ -415,6 +415,16 @@
             transform: rotate(90deg);
             pointer-events: none;
         }
+        /* START button hover/active states */
+        #startGameBtn:hover {
+            background: linear-gradient(135deg, #33ff99 0%, #00dd77 100%);
+            box-shadow: 0 6px 20px rgba(0, 255, 136, 0.4);
+            transform: translateY(-2px);
+        }
+        #startGameBtn:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 10px rgba(0, 255, 136, 0.3);
+        }
     </style>
 </head>
 <body>
@@ -504,6 +514,22 @@
             <div class="playerNameSection">
                 <div class="playerNameLabel">Player Name</div>
                 <input type="text" id="playerNameInput" value="Anonymous Runner" maxlength="20">
+                <button id="startGameBtn" style="
+                    margin-top: 20px;
+                    background: linear-gradient(135deg, #00ff88 0%, #00cc66 100%);
+                    border: none;
+                    color: #000;
+                    padding: 15px 40px;
+                    font-size: 24px;
+                    font-family: sans-serif;
+                    font-weight: bold;
+                    border-radius: 8px;
+                    cursor: pointer;
+                    transition: all 0.3s;
+                    box-shadow: 0 4px 15px rgba(0, 255, 136, 0.3);
+                    text-transform: uppercase;
+                    letter-spacing: 2px;
+                ">START</button>
             </div>
             
             <div class="statsSection">
