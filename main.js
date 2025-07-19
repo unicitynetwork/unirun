@@ -6444,8 +6444,19 @@ function startDroneAI() {
         const physics = noa.entities.getPhysics(droneEntity);
         if (!physics) return;
         
-        // Always pursue player regardless of distance
-        if (horizontalDistance > shootingRange) {
+        // Get player velocity to check if they're running
+        const playerPhysics = noa.entities.getPhysics(noa.playerEntity);
+        if (!playerPhysics) return;
+        
+        const playerVel = playerPhysics.body.velocity;
+        const playerSpeed = Math.sqrt(playerVel[0] * playerVel[0] + playerVel[2] * playerVel[2]);
+        const isPlayerRunning = playerSpeed > 10; // Threshold for running (adjust as needed)
+        
+        // Debug log for mode switching (uncomment if needed)
+        // console.log(`Player speed: ${playerSpeed.toFixed(1)}, Distance: ${horizontalDistance.toFixed(1)}, Mode: ${(horizontalDistance > shootingRange || isPlayerRunning) ? 'PURSUIT' : 'COMBAT'}`);
+        
+        // Pursue if: 1) out of shooting range OR 2) player is running
+        if (horizontalDistance > shootingRange || isPlayerRunning) {
             // PURSUIT MODE - fly high and approach player
             
             // Calculate target altitude (random between min and max for variety)
@@ -6490,6 +6501,7 @@ function startDroneAI() {
             
         } else {
             // COMBAT MODE - hover around player at lower altitude and shoot
+            // Only enters this mode when player is within range AND not running
             
             // Calculate target position for hovering
             const hoverRadius = shootingRange * 0.7; // Stay within shooting range
