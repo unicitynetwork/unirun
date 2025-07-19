@@ -18,6 +18,74 @@ const generatedCoins = new Set(); // Track all coin positions ever generated: "w
 const generatedTraps = new Set(); // Track all trap positions ever generated: "worldX,worldZ"
 let traps = new Map(); // Track all traps in the world: key = "x,z", value = entity
 
+// GLaDOS-style death messages - teasing but not insulting
+const deathMessages = [
+    "I'm making a note here: 'Needs improvement.'",
+    "The good news is, you're very consistent at this.",
+    "That was almost the right button. Almost.",
+    "Physics seems to be working perfectly. For the environment.",
+    "I've seen test subjects do better. They were robots, but still.",
+    "Your enthusiasm is noted. Your execution, less so.",
+    "The floor appreciates your frequent visits.",
+    "Interesting strategy. Have you considered trying the opposite?",
+    "I'm detecting a pattern in your performance. It's... consistent.",
+    "Don't worry, that only looked painful.",
+    "Your determination is admirable. Misguided, but admirable.",
+    "I've updated your file: 'Shows promise. Eventually.'",
+    "That was textbook. If the textbook was about what not to do.",
+    "The good news is you can't get worse. Statistically speaking.",
+    "I'm sure that looked easier in your head.",
+    "Your reflexes are impressive. Impressively delayed.",
+    "Achievement unlocked: 'Gravity's Best Friend'",
+    "I've seen this before. Usually in training videos titled 'Common Mistakes'",
+    "Your technique is unique. Uniquely unsuccessful.",
+    "The obstacle course is winning. By a lot.",
+    "That jump was calculated. But boy, are you bad at math.",
+    "I'm beginning to think the floor is your favorite part.",
+    "Your persistence is noted. So is your failure rate.",
+    "The laws of physics apply to everyone. Even you.",
+    "That was close! To being close.",
+    "I've added this to your permanent record. In red.",
+    "Your spatial awareness is... still loading, apparently.",
+    "The tutorial makes it look so easy, doesn't it?",
+    "I'm detecting high levels of optimism. And low levels of success.",
+    "Your learning curve appears to be a circle.",
+    "That's the spirit! The wrong spirit, but spirit nonetheless.",
+    "I've seen better. I've also seen worse. But mostly better.",
+    "Your timing was perfect. For a completely different game.",
+    "The floor sends its regards. Again.",
+    "I'm updating the difficulty. To 'easier than easy.'",
+    "That was almost right. In a parallel universe.",
+    "Your approach is creative. Creatively wrong.",
+    "I'm sure you meant to do that. Sure.",
+    "The obstacle apologizes for being in your way.",
+    "Your style is... let's call it 'experimental.'",
+    "That's one way to do it. The wrong way, but still.",
+    "I've seen this level beaten by a cat walking on the keyboard.",
+    "Your motor skills are developing. Slowly.",
+    "The respawn button is getting quite the workout.",
+    "I'm documenting this for science. Comedy science.",
+    "Your hand-eye coordination exists. Technically.",
+    "That was brave. Brave and completely ineffective.",
+    "The laws of momentum don't make exceptions. Sorry.",
+    "Your strategy needs work. And a strategy.",
+    "I'm lowering my expectations. Again.",
+    "That looked intentional. It wasn't, but it looked it.",
+    "Your progress is steady. Steadily horizontal.",
+    "The training wheels are in the mail.",
+    "I've seen drunk robots perform better.",
+    "Your technique defies explanation. And success.",
+    "That's the most creative failure I've seen today.",
+    "The pause button exists, you know.",
+    "Your dedication to floor inspection is commendable.",
+    "I'm revising the term 'user-friendly' because of you.",
+    "That was special. Not in the good way.",
+    "Your learning algorithm might need debugging.",
+    "The good news: you're memorable. The bad news: see above.",
+    "I'm adding a participation trophy to your file.",
+    "Your inputs are fascinating. Fascinatingly wrong."
+];
+
 // Block IDs (will be set during engine setup)
 let roomFloorID;
 let corridorEastID;
@@ -40,6 +108,7 @@ let chunkNeighbors = new Map(); // Pre-computed neighbor chunks: key = "chunkX,c
 let playerCoins = 0; // Player's coin balance (temporary counter)
 let isPlayerDead = false; // Track if player is dead
 let deathReason = ''; // Track how the player died
+let deathScreenTimer = 0; // Track time since death screen shown
 let backpacks = new Map(); // Track all backpacks in the world: key = "x,z", value = entity
 let backpackData = new Map(); // Persistent backpack data: key = "x,z", value = {position, lostCoins, etc}
 let totalDistanceTraveled = 0; // Track total distance traveled north
@@ -3909,9 +3978,22 @@ function setupNoaEngine() {
     });
     
     // Animate flying coins - MUST be outside worldDataNeeded to avoid duplicate listeners!
-    noa.on('tick', function() {
+    noa.on('tick', function(dt) {
         const currentTime = Date.now();
         const coinsToRemove = [];
+        
+        // Update death screen timer
+        if (deathScreenTimer > 0) {
+            deathScreenTimer -= dt;
+            if (deathScreenTimer <= 0) {
+                deathScreenTimer = 0;
+                // Update hint text to show input is now accepted
+                const respawnHint = document.querySelector('#deathScreen .respawnHint');
+                if (respawnHint) {
+                    respawnHint.style.color = '#ffffff';
+                }
+            }
+        }
         
         flyingCoins.forEach((flyData, coinEntity) => {
             const elapsed = (currentTime - flyData.startTime) / 1000; // seconds
@@ -6557,6 +6639,7 @@ function handlePlayerDeath(reason = 'Unknown') {
     // Show death screen with stats
     const deathScreen = document.getElementById('deathScreen');
     const deathReasonElement = document.getElementById('deathReason');
+    const deathHumorElement = document.getElementById('deathHumor');
     
     if (deathScreen) {
         deathScreen.classList.add('show');
@@ -6569,6 +6652,21 @@ function handlePlayerDeath(reason = 'Unknown') {
         }
         deathText += ` • Distance: ${Math.floor(totalDistanceTraveled)} blocks`;
         deathReasonElement.textContent = deathText;
+    }
+    
+    if (deathHumorElement) {
+        // Pick a random humor message
+        const randomMessage = deathMessages[Math.floor(Math.random() * deathMessages.length)];
+        deathHumorElement.textContent = randomMessage;
+    }
+    
+    // Set death screen timer to 5 seconds
+    deathScreenTimer = 5000;
+    
+    // Gray out respawn hint during timer
+    const respawnHint = document.querySelector('#deathScreen .respawnHint');
+    if (respawnHint) {
+        respawnHint.style.color = '#444444';
     }
     
     // Stop player movement
@@ -6587,7 +6685,7 @@ function handlePlayerDeath(reason = 'Unknown') {
     
     // Listen for space key to respawn
     const respawnHandler = (e) => {
-        if (e.code === 'Space' && isPlayerDead) {
+        if (e.code === 'Space' && isPlayerDead && deathScreenTimer <= 0) {
             e.preventDefault();
             document.removeEventListener('keydown', respawnHandler);
             respawnPlayer();
@@ -6597,7 +6695,7 @@ function handlePlayerDeath(reason = 'Unknown') {
     
     // Also listen for touch/click on death screen
     const deathScreenClickHandler = (e) => {
-        if (isPlayerDead) {
+        if (isPlayerDead && deathScreenTimer <= 0) {
             e.preventDefault();
             document.removeEventListener('keydown', respawnHandler);
             deathScreen.removeEventListener('click', deathScreenClickHandler);
@@ -6791,8 +6889,8 @@ function attachTouchEventListeners(touchControls) {
             e.stopPropagation();
             
             if (isPlayerDead) {
-                // Special handling for respawn
-                if (action === 'jump') {
+                // Special handling for respawn (check timer)
+                if (action === 'jump' && deathScreenTimer <= 0) {
                     respawnPlayer();
                 }
                 return;
@@ -6830,7 +6928,7 @@ function attachTouchEventListeners(touchControls) {
             e.preventDefault();
             
             if (isPlayerDead) {
-                if (action === 'jump') {
+                if (action === 'jump' && deathScreenTimer <= 0) {
                     respawnPlayer();
                 }
                 return;
