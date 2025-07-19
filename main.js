@@ -3235,23 +3235,23 @@ function setupNoaEngine() {
     // Add a red cylinder mesh to the player
     // Scene already declared above for skybox
     
-    // Create a red cylinder using Babylon.js (should be available globally)
-    const cylinder = BABYLON.MeshBuilder.CreateCylinder('playerCylinder', {
+    // Create a red box (rectangular prism) using Babylon.js
+    const box = BABYLON.MeshBuilder.CreateBox('playerBox', {
         height: 1.8,  // Player height
-        diameter: 0.8, // Player width
-        tessellation: 16
+        width: 0.6,   // Player width (0.6 blocks)
+        depth: 0.6    // Player depth (0.6 blocks)
     }, scene);
     
     // Create red material
     const mat = noa.rendering.makeStandardMaterial('playerMat');
     mat.diffuseColor = new BABYLON.Color3(1, 0, 0); // Red color
     mat.specularColor = new BABYLON.Color3(0, 0, 0); // No specular
-    cylinder.material = mat;
+    box.material = mat;
     
     // Add mesh component to player entity
     noa.entities.addComponent(noa.playerEntity, noa.entities.names.mesh, {
-        mesh: cylinder,
-        offset: [0, 0.9, 0] // Offset to center the cylinder on the player
+        mesh: box,
+        offset: [0, 0.9, 0] // Offset to center the box on the player
     });
     
     
@@ -5030,8 +5030,8 @@ function setupNoaEngine() {
                     textureContext.lineWidth = 3;
                     textureContext.textAlign = "center";
                     textureContext.textBaseline = "middle";
-                    textureContext.strokeText(`Z: ${bannerData.startZ}`, 256, 128);
-                    textureContext.fillText(`Z: ${bannerData.startZ}`, 256, 128);
+                    textureContext.strokeText(`${bannerData.startZ}`, 256, 128);
+                    textureContext.fillText(`${bannerData.startZ}`, 256, 128);
                     dynamicTexture.update();
                     
                     bannerMaterial.diffuseTexture = dynamicTexture;
@@ -5111,8 +5111,8 @@ function setupNoaEngine() {
                                 textureContext.lineWidth = 3;
                                 textureContext.textAlign = "center";
                                 textureContext.textBaseline = "middle";
-                                textureContext.strokeText(`Z: ${bannerWorldZ}`, 256, 128);
-                                textureContext.fillText(`Z: ${bannerWorldZ}`, 256, 128);
+                                textureContext.strokeText(`${bannerWorldZ}`, 256, 128);
+                                textureContext.fillText(`${bannerWorldZ}`, 256, 128);
                                 
                                 meshData.mesh.material.diffuseTexture.update();
                             }
