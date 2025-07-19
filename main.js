@@ -3235,18 +3235,70 @@ function setupNoaEngine() {
     // Add a red cylinder mesh to the player
     // Scene already declared above for skybox
     
-    // Create a red box (rectangular prism) using Babylon.js
+    // Create box with separate materials for each face
     const box = BABYLON.MeshBuilder.CreateBox('playerBox', {
         height: 1.8,  // Player height
         width: 0.6,   // Player width (0.6 blocks)
         depth: 0.6    // Player depth (0.6 blocks)
     }, scene);
     
-    // Create red material
-    const mat = noa.rendering.makeStandardMaterial('playerMat');
-    mat.diffuseColor = new BABYLON.Color3(1, 0, 0); // Red color
-    mat.specularColor = new BABYLON.Color3(0, 0, 0); // No specular
-    box.material = mat;
+    // Create multi-material for different textures per face
+    const multiMat = new BABYLON.MultiMaterial('playerMultiMat', scene);
+    
+    // Face order in Babylon.js: front, back, right, left, top, bottom
+    const faceConfigs = [
+        { name: 'front', texture: '/assets/unirun_robot_front.png' },
+        { name: 'back', texture: '/assets/unirun_robot_back.png' },
+        { name: 'right', texture: '/assets/unirun_robot_side.png' },
+        { name: 'left', texture: '/assets/unirun_robot_side.png' },
+        { name: 'top', texture: '/assets/unirun_robot_topbottom.png' },
+        { name: 'bottom', texture: '/assets/unirun_robot_topbottom.png' }
+    ];
+    
+    // Create materials for each face
+    faceConfigs.forEach((config, index) => {
+        const mat = noa.rendering.makeStandardMaterial(`player_${config.name}`);
+        
+        try {
+            const texture = new BABYLON.Texture(config.texture, scene, false, true, BABYLON.Texture.NEAREST_SAMPLINGMODE);
+            texture.hasAlpha = true;
+            
+            // Flip texture horizontally for left side to mirror the right side
+            if (config.name === 'left') {
+                texture.uScale = -1;
+            }
+            
+            mat.diffuseTexture = texture;
+            mat.specularColor = new BABYLON.Color3(0, 0, 0); // No specular
+            mat.emissiveColor = new BABYLON.Color3(0.1, 0.1, 0.1); // Slight emission for visibility
+            
+        } catch (e) {
+            // Fallback to red color if texture fails
+            console.warn(`Failed to load texture ${config.texture}, using red fallback`);
+            mat.diffuseColor = new BABYLON.Color3(1, 0, 0);
+            mat.specularColor = new BABYLON.Color3(0, 0, 0);
+        }
+        
+        multiMat.subMaterials[index] = mat;
+    });
+    
+    // Apply multi-material and create submeshes
+    box.material = multiMat;
+    box.subMeshes = [];
+    
+    // Create submeshes for each face
+    const verticesPerFace = 4;
+    const indicesPerFace = 6;
+    for (let i = 0; i < 6; i++) {
+        box.subMeshes.push(new BABYLON.SubMesh(
+            i,                          // materialIndex
+            i * verticesPerFace,        // verticesStart
+            verticesPerFace,            // verticesCount
+            i * indicesPerFace,         // indexStart
+            indicesPerFace,             // indexCount
+            box                         // mesh
+        ));
+    }
     
     // Add mesh component to player entity
     noa.entities.addComponent(noa.playerEntity, noa.entities.names.mesh, {
