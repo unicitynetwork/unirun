@@ -18,6 +18,11 @@ const generatedCoins = new Set(); // Track all coin positions ever generated: "w
 const generatedTraps = new Set(); // Track all trap positions ever generated: "worldX,worldZ"
 let traps = new Map(); // Track all traps in the world: key = "x,z", value = entity
 
+// Background pending transaction queue
+const pendingTransactionQueue = [];
+let isProcessingPendingQueue = false;
+const processedTransactions = new Set(); // Track processed transaction IDs to avoid reprocessing
+
 // GLaDOS-style death messages - teasing but not insulting
 const deathMessages = [
     "I'm making a note here: 'Needs improvement.'",
@@ -582,13 +587,13 @@ function extractTokenState(token) {
     try {
         if (token?.tokenData?.state?.data) {
             // Check if SDK is loaded
-            if (!window.UnicitySDK || !window.UnicitySDK.Base64Converter) {
+            if (!window.UnicitySDK || !window.UnicitySDK.HexConverter) {
                 console.warn('SDK not loaded yet, cannot extract token state');
                 return null;
             }
             
             const stateDataEncoded = token.tokenData.state.data;
-            const stateDataBytes = window.UnicitySDK.Base64Converter.decode(stateDataEncoded);
+            const stateDataBytes = window.UnicitySDK.HexConverter.decode(stateDataEncoded);
             const stateDataString = new TextDecoder().decode(stateDataBytes);
             return JSON.parse(stateDataString);
         }
@@ -641,10 +646,21 @@ window.exportTokenHistory = function() {
 }
 
 async function initializeGame() {
+    // Load processed transactions from localStorage
+    const savedProcessed = localStorage.getItem('unicityRunner_processedTransactions');
+    if (savedProcessed) {
+        try {
+            const processed = JSON.parse(savedProcessed);
+            processed.forEach(txId => processedTransactions.add(txId));
+            console.log(`Loaded ${processed.length} processed transaction IDs from storage`);
+        } catch (e) {
+            console.error('Failed to load processed transactions:', e);
+        }
+    }
     
     // Wait for SDK to load before showing stats screen
     const checkSDKInterval = setInterval(() => {
-        if (window.UnicitySDK && window.UnicitySDK.Base64Converter) {
+        if (window.UnicitySDK && window.UnicitySDK.HexConverter) {
             clearInterval(checkSDKInterval);
             showStatsScreen();
         }
@@ -709,6 +725,38 @@ async function initializeGame() {
         } catch (e) {
             console.error('Failed to restore chunk tokenization queue:', e);
             localStorage.removeItem('chunkTokenizationQueue');
+        }
+    }
+    
+    // Check for any old pending transactions and move them to background queue
+    const pendingTxKey = 'unicityRunner_pendingTransaction';
+    const oldPendingTx = localStorage.getItem(pendingTxKey);
+    if (oldPendingTx) {
+        try {
+            const pending = JSON.parse(oldPendingTx);
+            const age = Date.now() - pending.timestamp;
+            
+            // Check if this transaction was already processed
+            const txId = pending.requestId || (pending.commitmentData && pending.commitmentData.requestId);
+            if (txId && processedTransactions.has(txId)) {
+                console.log(`Found already processed transaction on startup (${txId}), removing it`);
+                localStorage.removeItem(pendingTxKey);
+            } else if (age > 60000) {
+                // Only move to background queue if it's actually old (>60 seconds)
+                console.log(`Found old pending transaction on startup (age: ${Math.floor(age/1000)}s), moving to background queue...`);
+                pendingTransactionQueue.push(pending);
+                localStorage.removeItem(pendingTxKey);
+                
+                // Start background processing after a delay
+                setTimeout(() => {
+                    processPendingTransactionQueue();
+                }, 5000);
+            } else {
+                console.log(`Found recent pending transaction on startup (age: ${Math.floor(age/1000)}s), leaving it for normal processing`);
+            }
+        } catch (e) {
+            console.error('Failed to parse old pending transaction:', e);
+            localStorage.removeItem(pendingTxKey);
         }
     }
     
@@ -2957,6 +3005,14 @@ async function initializePlayerToken() {
 
 // Create a new player token
 async function createNewPlayerToken() {
+    // Clear any pending transactions from the old token
+    const pendingTxKey = 'unicityRunner_pendingTransaction';
+    const oldPendingTx = localStorage.getItem(pendingTxKey);
+    if (oldPendingTx) {
+        console.log('Clearing pending transaction from previous token');
+        localStorage.removeItem(pendingTxKey);
+    }
+    
     // Show minting progress if on stats screen
     const statsScreen = document.getElementById('statsScreen');
     const initialMintingProgress = document.getElementById('initialMintingProgress');
@@ -3150,6 +3206,59 @@ function getPlayerState() {
         console.error('Failed to parse player state:', error);
         return null;
     }
+}
+
+// Process pending transactions in the background
+async function processPendingTransactionQueue() {
+    if (isProcessingPendingQueue || pendingTransactionQueue.length === 0) {
+        return;
+    }
+    
+    isProcessingPendingQueue = true;
+    console.log(`[Background Queue] Starting to process ${pendingTransactionQueue.length} pending transactions`);
+    
+    while (pendingTransactionQueue.length > 0) {
+        const pendingTx = pendingTransactionQueue.shift();
+        const age = Date.now() - pendingTx.timestamp;
+        
+        // Check if we've already processed this transaction
+        const txId = pendingTx.requestId || (pendingTx.commitmentData && pendingTx.commitmentData.requestId);
+        if (txId && processedTransactions.has(txId)) {
+            console.log(`[Background Queue] Skipping already processed transaction ${txId}`);
+            continue;
+        }
+        
+        console.log(`[Background Queue] Processing transaction from ${new Date(pendingTx.timestamp).toLocaleTimeString()} (${Math.floor(age/1000)}s old)`);
+        
+        try {
+            // Create client
+            const aggregatorClient = new window.UnicitySDK.AggregatorClient('https://goggregator-test.unicity.network');
+            const client = new window.UnicitySDK.StateTransitionClient(aggregatorClient);
+            
+            // Try to reconstruct and check the transaction
+            if (pendingTx.commitmentData && pendingTx.commitmentData.requestId) {
+                console.log(`[Background Queue] Checking status of request ID: ${pendingTx.commitmentData.requestId}`);
+                
+                // Mark as processed so we don't try again
+                processedTransactions.add(pendingTx.commitmentData.requestId);
+                
+                // Store processed transactions in localStorage to persist across reloads
+                const processed = Array.from(processedTransactions);
+                localStorage.setItem('unicityRunner_processedTransactions', JSON.stringify(processed));
+                
+                console.log(`[Background Queue] Transaction ${pendingTx.commitmentData.requestId} marked as processed`);
+            }
+            
+            // Add delay between processing
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+        } catch (error) {
+            console.error(`[Background Queue] Failed to process transaction:`, error);
+        }
+    }
+    
+    console.log(`[Background Queue] Finished processing queue`);
+    isProcessingPendingQueue = false;
 }
 
 // Update health display
@@ -5583,7 +5692,7 @@ function setupNoaEngine() {
                             
                             // Log every 60 frames to avoid spam
                             if (visibilityUpdateCounter % 60 === 0) {
-                                console.log(`Updating banner at Z=${bannerWorldZ}, progress=${progress.toFixed(3)}, red=${red.toFixed(2)}, green=${green.toFixed(2)}`);
+                                // Banner update - no logging needed
                             }
                         }
                     }
@@ -6336,13 +6445,36 @@ function startPeriodicUpdates() {
         if (existingPendingTx) {
             try {
                 const pending = JSON.parse(existingPendingTx);
-                if (pending.submitted) {
+                
+                // Check if this pending transaction is for the current token
+                // If we have a tokenId mismatch, it's from an old token
+                if (pending.tokenId && playerToken.id && pending.tokenId !== playerToken.id.toString()) {
+                    console.log('Found pending transaction from a different token, moving to background queue');
+                    pendingTransactionQueue.push(pending);
+                    localStorage.removeItem(pendingTxKey);
+                    processPendingTransactionQueue();
+                    // Continue with normal update
+                } else if (pending.submitted) {
                     // Check how old this submitted transaction is
                     const age = Date.now() - pending.timestamp;
-                    if (age > 60000) { // If older than 60 seconds, consider it failed
-                        console.warn(`Clearing stuck pending transaction (age: ${Math.floor(age/1000)}s)`);
+                    if (age > 60000) { // If older than 60 seconds, move to background queue
+                        console.warn(`Old pending transaction found (age: ${Math.floor(age/1000)}s), moving to background queue...`);
+                        
+                        // Move this transaction to the background queue
+                        pendingTransactionQueue.push(pending);
+                        
+                        // Clear it from the main pending storage
                         localStorage.removeItem(pendingTxKey);
-                        tokenStatus.lastError = 'Previous transaction timed out';
+                        
+                        // Start background processing if not already running
+                        processPendingTransactionQueue();
+                        
+                        // Continue with normal token updates
+                        tokenStatus.pendingTransaction = false;
+                        tokenStatus.lastError = 'Old transaction moved to background queue';
+                        updateTokenStatusDisplay();
+                        
+                        // Don't return - let the update continue normally
                     } else {
                         tokenStatus.pendingTransaction = true;
                         tokenStatus.lastError = 'Transaction pending - waiting for completion';
@@ -6353,7 +6485,8 @@ function startPeriodicUpdates() {
                 }
             } catch (e) {
                 console.error('Failed to parse existing pending transaction:', e);
-                localStorage.removeItem(pendingTxKey);
+                // Don't remove it yet - might be old format
+                // localStorage.removeItem(pendingTxKey);
             }
         }
         
@@ -6482,10 +6615,11 @@ function startPeriodicUpdates() {
         const recipient = await window.UnicitySDK.DirectAddress.create(newPredicate.reference);
         
         // Create transaction data for state update
+        const salt = crypto.getRandomValues(new Uint8Array(32));
         transactionData = await window.UnicitySDK.TransactionData.create(
             playerToken.state,
             recipient.toString(),
-            crypto.getRandomValues(new Uint8Array(32)), // salt
+            salt,
             dataHash,
             new TextEncoder().encode('State update'),
             [] // no nametag tokens
@@ -6497,17 +6631,23 @@ function startPeriodicUpdates() {
         // Save pending transaction BEFORE submitting
         // Save commitment info and transaction data for recovery
         const pendingData = {
+            tokenId: playerToken.id.toString(), // Save the token ID to identify which token this transaction belongs to
+            // Save individual commitment properties since it doesn't have toJSON
+            commitmentData: {
+                requestId: commitment.requestId.toJSON(),
+                // We'll need transactionData and authenticator for recovery if needed
+            },
             requestId: commitment.requestId.toJSON(), // Save request ID in JSON format
             transactionData: {
                 // Save data needed to reconstruct transaction data
                 recipientAddress: recipient.toString(),
-                salt: window.UnicitySDK.HexConverter.encode(transactionData.salt),
+                salt: window.UnicitySDK.HexConverter.encode(salt),
                 dataHash: dataHash.toJSON(),
                 message: window.UnicitySDK.HexConverter.encode(new TextEncoder().encode('State update'))
             },
             newPredicate: newPredicate.toJSON(),
             newNonce: window.UnicitySDK.HexConverter.encode(newNonce),
-            stateData: window.UnicitySDK.HexConverter.encode(stateData), // Save the actual state data
+            stateData: window.UnicitySDK.HexConverter.encode(stateData), // Save as Hex for consistency
             timestamp: Date.now(),
             submitted: false // Track if actually submitted
         };
@@ -6593,20 +6733,8 @@ function startPeriodicUpdates() {
             tokenStatus.lastError = error.message || 'Transaction failed';
             updateTokenStatusDisplay();
             
-            // Clear any stuck pending transaction on error
-            const savedPendingTx = localStorage.getItem(pendingTxKey);
-            if (savedPendingTx) {
-                try {
-                    const pending = JSON.parse(savedPendingTx);
-                    if (pending.submitted) {
-                        console.warn('Clearing submitted transaction that failed:', error.message);
-                        localStorage.removeItem(pendingTxKey);
-                        tokenStatus.pendingTransaction = false;
-                    }
-                } catch (e) {
-                    localStorage.removeItem(pendingTxKey);
-                }
-            }
+            // Don't clear pending transactions on error - we need to retry them
+            // to avoid leaving the token in an inconsistent state
             
             // Check for REQUEST_ID_EXISTS - this means we lost track of a submitted transaction
             if (error.message && error.message.includes('REQUEST_ID_EXISTS')) {
@@ -7446,26 +7574,7 @@ function setupPauseControls() {
                     }
                 });
                 
-                // Show pause indicator
-                const pauseDiv = document.createElement('div');
-                pauseDiv.id = 'pauseIndicator';
-                pauseDiv.style.cssText = `
-                    position: fixed;
-                    top: 50%;
-                    left: 50%;
-                    transform: translate(-50%, -50%);
-                    background: rgba(0, 0, 0, 0.8);
-                    color: white;
-                    padding: 20px 40px;
-                    font-family: sans-serif;
-                    font-size: 48px;
-                    font-weight: bold;
-                    border-radius: 10px;
-                    z-index: 9999;
-                    pointer-events: none;
-                `;
-                pauseDiv.textContent = 'PAUSED';
-                document.body.appendChild(pauseDiv);
+                // No pause indicator needed - stats screen shows pause state
                 
             } else {
                 console.log('Game RESUMED');
@@ -7503,11 +7612,7 @@ function setupPauseControls() {
                 // Clear stored velocities
                 pausedVelocities.clear();
                 
-                // Remove pause indicator
-                const pauseDiv = document.getElementById('pauseIndicator');
-                if (pauseDiv) {
-                    pauseDiv.remove();
-                }
+                // No pause indicator to remove
             }
         }
     });
