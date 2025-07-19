@@ -3306,6 +3306,76 @@ function setupNoaEngine() {
         offset: [0, 0.9, 0] // Offset to center the box on the player
     });
     
+    // Add flashing lights on robot's head
+    const lightColors = [
+        new BABYLON.Color3(1, 1, 1),      // White
+        new BABYLON.Color3(0, 1, 0),      // Green
+        new BABYLON.Color3(1, 1, 0)       // Yellow
+    ];
+    
+    // Create light spheres on top of robot
+    const lights = [];
+    const lightPositions = [
+        [-0.2, 0.9, -0.2],  // Front-left
+        [0.2, 0.9, -0.2],   // Front-right
+        [-0.2, 0.9, 0.2],   // Back-left
+        [0.2, 0.9, 0.2]     // Back-right
+    ];
+    
+    lightPositions.forEach((pos, index) => {
+        // Create small sphere for light
+        const lightSphere = BABYLON.MeshBuilder.CreateSphere(`robotLight${index}`, {
+            diameter: 0.1,
+            segments: 8
+        }, scene);
+        
+        // Parent to robot box
+        lightSphere.parent = box;
+        lightSphere.position.set(pos[0], pos[1], pos[2]);
+        
+        // Create emissive material
+        const lightMat = noa.rendering.makeStandardMaterial(`robotLightMat${index}`);
+        lightMat.emissiveColor = lightColors[0]; // Start with white
+        lightMat.diffuseColor = new BABYLON.Color3(0, 0, 0);
+        lightMat.specularColor = new BABYLON.Color3(0, 0, 0);
+        lightSphere.material = lightMat;
+        
+        lights.push({ sphere: lightSphere, material: lightMat });
+    });
+    
+    // Animate the lights
+    let lightTime = 0;
+    scene.registerBeforeRender(() => {
+        lightTime += 0.05;
+        
+        // Calculate which color to show (cycle through colors)
+        const colorIndex = Math.floor(lightTime) % lightColors.length;
+        const currentColor = lightColors[colorIndex];
+        
+        // Update all lights with flashing effect
+        lights.forEach((light, index) => {
+            // Add some offset so lights don't all flash in sync
+            const offsetColorIndex = (colorIndex + index) % lightColors.length;
+            const lightColor = lightColors[offsetColorIndex];
+            
+            // Pulse effect
+            const pulse = 0.5 + 0.5 * Math.sin(lightTime * 4 + index);
+            light.material.emissiveColor = lightColor.scale(pulse);
+            
+            // Make the sphere glow
+            light.sphere.visibility = 0.8 + 0.2 * pulse;
+        });
+    });
+    
+    // Make the robot material brighter too
+    faceConfigs.forEach((config, index) => {
+        const mat = multiMat.subMaterials[index];
+        if (mat && mat.diffuseTexture) {
+            mat.emissiveColor = new BABYLON.Color3(0.2, 0.2, 0.2); // Increased emission
+            mat.diffuseTexture.level = 1.5; // Brighten texture
+        }
+    });
+    
     
     // Increase the player's movement speed 4x total (was 2x, now doubling again)
     const playerMovement = noa.entities.getMovement(noa.playerEntity);
