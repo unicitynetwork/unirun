@@ -4,7 +4,7 @@ import * as BABYLON from '@babylonjs/core'
 
 // Global world seed for deterministic generation
 const WORLD_SEED = 'UnicityRunnerDemo_v1_Seed_2025';
-const GAMEDEV_VERSION = 'dev00132'; // Version for chunk token ID generation
+const GAMEDEV_VERSION = 'dev00135'; // Version for chunk token ID generation - Fixed chunk token conflicts
 const CHUNK_TOKEN_TYPE_BYTES = new Uint8Array([9]); // Token type for chunks
 
 // Initialize globals
@@ -115,6 +115,15 @@ let totalDistanceTraveled = 0; // Track total distance traveled north
 let playerStartZ = null; // Track initial Z position
 let isPaused = false; // Track game pause state
 let banners = new Map(); // Track all banners in the world: key = "startZ", value = entity
+
+// Player statistics tracking
+let playerStats = {
+    playerName: localStorage.getItem('unicityRunner_playerName') || 'Anonymous Runner',
+    runHistory: JSON.parse(localStorage.getItem('unicityRunner_runHistory') || '[]'),
+    currentRunStartTime: null,
+    currentRunDistance: 0,
+    tokenHistory: JSON.parse(localStorage.getItem('unicityRunner_tokenHistory') || '[]')
+};
 
 // Coin inventory tracking
 let confirmedURCBalance = 0; // Confirmed balance from minted tokens
@@ -403,7 +412,263 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeGame();
 });
 
+// Stats screen functions
+function showStatsScreen() {
+    const statsScreen = document.getElementById('statsScreen');
+    statsScreen.classList.add('show');
+    
+    // Update player name input
+    document.getElementById('playerNameInput').value = playerStats.playerName;
+    
+    // Update statistics
+    updateStatsDisplay();
+    
+    // Pause the game
+    isPaused = true;
+}
+
+function hideStatsScreen() {
+    const statsScreen = document.getElementById('statsScreen');
+    statsScreen.classList.remove('show');
+    
+    // Save player name if changed
+    const newName = document.getElementById('playerNameInput').value.trim();
+    if (newName && newName !== playerStats.playerName) {
+        playerStats.playerName = newName;
+        localStorage.setItem('unicityRunner_playerName', newName);
+    }
+}
+
+function updateStatsDisplay() {
+    const runHistory = document.getElementById('runHistory');
+    const totalRuns = document.getElementById('totalRuns');
+    const totalDistance = document.getElementById('totalDistance');
+    const bestDistance = document.getElementById('bestDistance');
+    const totalCoins = document.getElementById('totalCoins');
+    
+    // Update run history
+    if (playerStats.runHistory.length === 0) {
+        runHistory.innerHTML = '<div class="noRunsMessage">No runs completed yet. Start playing!</div>';
+    } else {
+        runHistory.innerHTML = playerStats.runHistory
+            .slice(-10) // Show last 10 runs
+            .reverse() // Most recent first
+            .map((run, index) => {
+                // Try to get corresponding token data if available
+                const runIndex = playerStats.runHistory.length - index - 1;
+                const correspondingToken = playerStats.tokenHistory[runIndex];
+                const tokenState = correspondingToken ? extractTokenState(correspondingToken) : null;
+                
+                return `
+                    <div class="runEntry">
+                        <div class="runNumber">Run #${playerStats.runHistory.length - index}</div>
+                        <div class="runStat">
+                            <span class="label">Distance:</span>
+                            <span class="value">${run.distance} blocks</span>
+                        </div>
+                        <div class="runStat">
+                            <span class="label">Coins:</span>
+                            <span class="value">${run.coins} URC</span>
+                        </div>
+                        ${tokenState ? `
+                        <div class="runStat">
+                            <span class="label">Final Health:</span>
+                            <span class="value">${tokenState.health || 0}/100</span>
+                        </div>
+                        ` : ''}
+                        <div class="runStat">
+                            <span class="label">Death:</span>
+                            <span class="value">${run.deathReason}</span>
+                        </div>
+                        <div class="runStat">
+                            <span class="label">Duration:</span>
+                            <span class="value">${formatDuration(run.duration)}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+    }
+    
+    // Calculate totals
+    const totals = playerStats.runHistory.reduce((acc, run) => {
+        acc.runs++;
+        acc.distance += run.distance;
+        acc.coins += run.coins;
+        acc.bestDistance = Math.max(acc.bestDistance, run.distance);
+        return acc;
+    }, { runs: 0, distance: 0, coins: 0, bestDistance: 0 });
+    
+    totalRuns.textContent = totals.runs;
+    totalDistance.textContent = `${totals.distance} blocks`;
+    bestDistance.textContent = `${totals.bestDistance} blocks`;
+    totalCoins.textContent = `${totals.coins} URC`;
+    
+    // Update token count
+    const totalTokens = document.getElementById('totalTokens');
+    totalTokens.textContent = playerStats.tokenHistory.length + 1; // +1 for current token
+    
+    // Update token history
+    const tokenHistoryDiv = document.getElementById('tokenHistory');
+    if (playerStats.tokenHistory.length === 0) {
+        tokenHistoryDiv.innerHTML = '<div class="noRunsMessage">No previous tokens yet.</div>';
+    } else {
+        tokenHistoryDiv.innerHTML = playerStats.tokenHistory
+            .slice(-5) // Show last 5 tokens
+            .reverse() // Most recent first
+            .map((token, index) => {
+                const tokenId = token.tokenData?.tokenId?.value || 'Unknown';
+                const shortId = typeof tokenId === 'string' ? 
+                    tokenId.substring(0, 8) + '...' : 
+                    'Token ' + (playerStats.tokenHistory.length - index);
+                    
+                // Extract state data from token if available
+                const tokenState = extractTokenState(token);
+                
+                // Calculate distance from token position if available
+                let tokenDistance = token.finalStats.distance;
+                if (tokenState && tokenState.position && playerStartZ !== null) {
+                    tokenDistance = Math.abs(tokenState.position[2] - playerStartZ);
+                }
+                
+                return `
+                    <div class="runEntry">
+                        <div class="runNumber">${shortId}</div>
+                        <div class="runStat">
+                            <span class="label">Distance:</span>
+                            <span class="value">${Math.floor(tokenDistance)} blocks</span>
+                        </div>
+                        <div class="runStat">
+                            <span class="label">Coins:</span>
+                            <span class="value">${token.finalStats.coins} URC</span>
+                        </div>
+                        ${tokenState ? `
+                        <div class="runStat">
+                            <span class="label">Final Health:</span>
+                            <span class="value">${tokenState.health || 0}/100</span>
+                        </div>
+                        <div class="runStat">
+                            <span class="label">Final Position:</span>
+                            <span class="value">Z: ${Math.floor(tokenState.position?.[2] || 0)}</span>
+                        </div>
+                        <div class="runStat">
+                            <span class="label">Score:</span>
+                            <span class="value">${tokenState.score || 0}</span>
+                        </div>
+                        ` : ''}
+                        <div class="runStat">
+                            <span class="label">Death:</span>
+                            <span class="value">${token.finalStats.deathReason}</span>
+                        </div>
+                        <div class="runStat">
+                            <span class="label">Last Update:</span>
+                            <span class="value">${tokenState?.lastUpdate ? 
+                                new Date(tokenState.lastUpdate).toLocaleTimeString() : 
+                                'Unknown'}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+    }
+}
+
+function formatDuration(seconds) {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+// Helper function to extract state from archived token
+function extractTokenState(token) {
+    try {
+        if (token?.tokenData?.state?.data) {
+            // Check if SDK is loaded
+            if (!window.UnicitySDK || !window.UnicitySDK.Base64Converter) {
+                console.warn('SDK not loaded yet, cannot extract token state');
+                return null;
+            }
+            
+            const stateDataEncoded = token.tokenData.state.data;
+            const stateDataBytes = window.UnicitySDK.Base64Converter.decode(stateDataEncoded);
+            const stateDataString = new TextDecoder().decode(stateDataBytes);
+            return JSON.parse(stateDataString);
+        }
+    } catch (e) {
+        console.error('Error extracting token state:', e);
+    }
+    return null;
+}
+
+function recordRunStats(distance, coins, deathReason, duration) {
+    const runData = {
+        distance: Math.floor(distance),
+        coins: coins,
+        deathReason: deathReason,
+        duration: duration,
+        timestamp: Date.now()
+    };
+    
+    playerStats.runHistory.push(runData);
+    
+    // Keep only last 50 runs
+    if (playerStats.runHistory.length > 50) {
+        playerStats.runHistory = playerStats.runHistory.slice(-50);
+    }
+    
+    // Save to localStorage
+    localStorage.setItem('unicityRunner_runHistory', JSON.stringify(playerStats.runHistory));
+}
+
+// Export token history to JSON file
+window.exportTokenHistory = function() {
+    const exportData = {
+        playerName: playerStats.playerName,
+        exportDate: new Date().toISOString(),
+        gameVersion: GAMEDEV_VERSION,
+        runHistory: playerStats.runHistory,
+        tokenHistory: playerStats.tokenHistory,
+        currentToken: playerToken ? 'Active' : 'None'
+    };
+    
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `unicityrunner_tokens_${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
 async function initializeGame() {
+    
+    // Wait for SDK to load before showing stats screen
+    const checkSDKInterval = setInterval(() => {
+        if (window.UnicitySDK && window.UnicitySDK.Base64Converter) {
+            clearInterval(checkSDKInterval);
+            showStatsScreen();
+        }
+    }, 1000);
+    
+    // Handle stats screen key events
+    document.addEventListener('keydown', (e) => {
+        const statsScreen = document.getElementById('statsScreen');
+        if (statsScreen.classList.contains('show')) {
+            if (e.code === 'KeyP') {
+                e.preventDefault();
+                hideStatsScreen();
+                isPaused = false;
+            } else if (e.code === 'Space') {
+                e.preventDefault();
+                hideStatsScreen();
+                isPaused = false;
+                // Start new game
+                if (!noa) {
+                    setupNoaEngine();
+                }
+            }
+        }
+    });
     
     // Check for gamedev version change and clear chunk tokens if needed
     checkGamedevVersionAndClearChunks();
@@ -2690,6 +2955,17 @@ async function initializePlayerToken() {
 
 // Create a new player token
 async function createNewPlayerToken() {
+    // Reset token status for new token
+    tokenStatus = {
+        initialized: false,
+        totalSubmissions: 0,
+        successfulSubmissions: 0,
+        lastUpdateTime: 0,
+        lastError: null,
+        pendingTransaction: false
+    };
+    updateTokenStatusDisplay();
+    
     // Don't set a position in the initial state - let the spawn logic handle it
     const spawnPosition = null;
     
@@ -3230,6 +3506,9 @@ function setupNoaEngine() {
     // Initialize starting position for distance tracking
     if (playerStartZ === null) {
         playerStartZ = position[2];
+        // Start tracking the run
+        playerStats.currentRunStartTime = Date.now();
+        playerStats.currentRunDistance = 0;
     }
     
     // Add a red cylinder mesh to the player
@@ -6696,6 +6975,43 @@ setInterval(() => {
     });
 }, 16); // Check 60 times per second for fast bullets
 
+// Archive current player token to history
+async function archivePlayerToken() {
+    if (!playerToken) return;
+    
+    try {
+        // Get current token data
+        const tokenData = await playerToken.toJSON();
+        
+        // Add metadata
+        const archivedToken = {
+            tokenData: tokenData,
+            archivedAt: Date.now(),
+            finalStats: {
+                distance: totalDistanceTraveled,
+                coins: confirmedURCBalance + pendingURCBalance,
+                deathReason: deathReason,
+                playerName: playerStats.playerName
+            }
+        };
+        
+        // Add to token history
+        playerStats.tokenHistory.push(archivedToken);
+        
+        // Keep only last 20 tokens
+        if (playerStats.tokenHistory.length > 20) {
+            playerStats.tokenHistory = playerStats.tokenHistory.slice(-20);
+        }
+        
+        // Save to localStorage
+        localStorage.setItem('unicityRunner_tokenHistory', JSON.stringify(playerStats.tokenHistory));
+        
+        console.log('Player token archived successfully');
+    } catch (error) {
+        console.error('Error archiving player token:', error);
+    }
+}
+
 // Handle player death
 function handlePlayerDeath(reason = 'Unknown') {
     if (isPlayerDead) return; // Already dead
@@ -6709,6 +7025,21 @@ function handlePlayerDeath(reason = 'Unknown') {
     
     // Get total coins lost (confirmed + pending)
     const totalCoinsLost = confirmedURCBalance + pendingURCBalance;
+    
+    // Record run statistics
+    const runDuration = playerStats.currentRunStartTime ? 
+        (Date.now() - playerStats.currentRunStartTime) / 1000 : 0;
+    recordRunStats(totalDistanceTraveled, totalCoinsLost, reason, runDuration);
+    
+    // Archive the current player token
+    archivePlayerToken();
+    
+    // Stop periodic token updates
+    if (updateIntervalId) {
+        clearInterval(updateIntervalId);
+        updateIntervalId = null;
+        console.log('Stopped periodic token updates on death');
+    }
     
     // Prepare inventory data for backpack
     let backpackInventory = {
@@ -6963,6 +7294,13 @@ function setupPauseControls() {
             e.preventDefault();
             isPaused = !isPaused;
             
+            // Show or hide stats screen
+            if (isPaused) {
+                showStatsScreen();
+            } else {
+                hideStatsScreen();
+            }
+            
             if (isPaused) {
                 console.log('Game PAUSED - Press P to resume');
                 
@@ -7205,13 +7543,32 @@ function attachTouchEventListeners(touchControls) {
 }
 
 // Respawn player after death
-function respawnPlayer() {
+async function respawnPlayer() {
     isPlayerDead = false;
     
     // Hide death screen
     const deathScreen = document.getElementById('deathScreen');
     if (deathScreen) {
         deathScreen.classList.remove('show');
+    }
+    
+    // Show loading indicator while creating new token
+    updateTokenStatusDisplay('Creating new player token...');
+    
+    try {
+        // Create new player token
+        await createNewPlayerToken();
+        console.log('New player token created for respawn');
+        
+        // Update token status display
+        updateTokenStatusDisplay();
+        
+        // Start periodic token updates for the new token
+        startPeriodicUpdates();
+        console.log('Started periodic token updates for new token');
+    } catch (error) {
+        console.error('Error creating new player token:', error);
+        updateTokenStatusDisplay('Error creating token. Using offline mode.');
     }
     
     // Reset health
@@ -7237,6 +7594,10 @@ function respawnPlayer() {
     // Reset distance tracking
     playerStartZ = spawnPos[2];
     totalDistanceTraveled = 0;
+    
+    // Start new run tracking
+    playerStats.currentRunStartTime = Date.now();
+    playerStats.currentRunDistance = 0;
     
     // Respawn drone at a distance
     if (droneEntity && noa.entities.hasComponent(droneEntity, noa.entities.names.position)) {

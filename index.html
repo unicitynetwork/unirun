@@ -199,6 +199,132 @@
             0%, 100% { opacity: 1; }
             50% { opacity: 0.3; }
         }
+        /* Stats screen styles */
+        #statsScreen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.95);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 999;
+            flex-direction: column;
+            color: white;
+            font-family: sans-serif;
+        }
+        #statsScreen.show {
+            display: flex;
+        }
+        .statsContainer {
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid #666;
+            border-radius: 10px;
+            padding: 30px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        .statsTitle {
+            font-size: 36px;
+            font-weight: bold;
+            text-align: center;
+            margin-bottom: 30px;
+            color: #00ff88;
+            text-shadow: 0 0 10px #00ff88;
+        }
+        .playerNameSection {
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        .playerNameLabel {
+            font-size: 18px;
+            margin-bottom: 10px;
+            color: #aaa;
+        }
+        #playerNameInput {
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid #666;
+            color: white;
+            font-size: 24px;
+            padding: 10px 20px;
+            border-radius: 5px;
+            text-align: center;
+            width: 300px;
+            max-width: 100%;
+        }
+        #playerNameInput:focus {
+            outline: none;
+            border-color: #00ff88;
+            box-shadow: 0 0 10px #00ff88;
+        }
+        .statsSection {
+            margin: 20px 0;
+        }
+        .statsSectionTitle {
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            color: #ffcc00;
+            border-bottom: 2px solid #666;
+            padding-bottom: 10px;
+        }
+        .runHistory {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .runEntry {
+            background: rgba(255, 255, 255, 0.05);
+            margin: 10px 0;
+            padding: 15px;
+            border-radius: 5px;
+            border: 1px solid #444;
+        }
+        .runEntry:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: #666;
+        }
+        .runNumber {
+            color: #00ff88;
+            font-weight: bold;
+            font-size: 18px;
+        }
+        .runStat {
+            margin: 5px 0;
+            font-size: 16px;
+        }
+        .runStat .label {
+            color: #aaa;
+            display: inline-block;
+            width: 120px;
+        }
+        .runStat .value {
+            color: #fff;
+            font-weight: bold;
+        }
+        .totalStats {
+            background: rgba(0, 255, 136, 0.1);
+            border: 2px solid #00ff88;
+            padding: 20px;
+            border-radius: 10px;
+            margin-top: 20px;
+        }
+        .closeStats {
+            margin-top: 30px;
+            text-align: center;
+            font-size: 18px;
+            color: #888;
+            animation: blink 2s ease-in-out infinite;
+        }
+        .noRunsMessage {
+            text-align: center;
+            color: #888;
+            font-style: italic;
+            padding: 20px;
+        }
         /* Touch controls overlay */
         #touchControls {
             position: fixed;
@@ -342,6 +468,83 @@
         <div class="deathReason" id="deathReason">Killed by drone</div>
         <div class="deathHumor" id="deathHumor"></div>
         <div class="respawnHint">Press SPACE or tap anywhere to respawn</div>
+        <div style="margin-top: 20px;">
+            <button id="viewStatsBtn" style="
+                background: rgba(0, 255, 136, 0.2);
+                border: 2px solid #00ff88;
+                color: #00ff88;
+                padding: 10px 20px;
+                font-size: 16px;
+                font-family: sans-serif;
+                border-radius: 5px;
+                cursor: pointer;
+                transition: all 0.3s;
+            " onclick="document.getElementById('deathScreen').classList.remove('show'); showStatsScreen();">
+                View Full Statistics
+            </button>
+        </div>
+    </div>
+    <div id="statsScreen">
+        <div class="statsContainer">
+            <div class="statsTitle">PLAYER STATISTICS</div>
+            
+            <div class="playerNameSection">
+                <div class="playerNameLabel">Player Name</div>
+                <input type="text" id="playerNameInput" value="Anonymous Runner" maxlength="20">
+            </div>
+            
+            <div class="statsSection">
+                <div class="statsSectionTitle">Run History</div>
+                <div class="runHistory" id="runHistory">
+                    <div class="noRunsMessage">No runs completed yet. Start playing!</div>
+                </div>
+            </div>
+            
+            <div class="totalStats" id="totalStats">
+                <div class="statsSectionTitle">Total Statistics</div>
+                <div class="runStat">
+                    <span class="label">Total Runs:</span>
+                    <span class="value" id="totalRuns">0</span>
+                </div>
+                <div class="runStat">
+                    <span class="label">Total Distance:</span>
+                    <span class="value" id="totalDistance">0 blocks</span>
+                </div>
+                <div class="runStat">
+                    <span class="label">Best Distance:</span>
+                    <span class="value" id="bestDistance">0 blocks</span>
+                </div>
+                <div class="runStat">
+                    <span class="label">Total Coins:</span>
+                    <span class="value" id="totalCoins">0 URC</span>
+                </div>
+                <div class="runStat">
+                    <span class="label">Tokens Created:</span>
+                    <span class="value" id="totalTokens">0</span>
+                </div>
+            </div>
+            
+            <div class="statsSection">
+                <div class="statsSectionTitle">Token History</div>
+                <div class="runHistory" id="tokenHistory">
+                    <div class="noRunsMessage">No previous tokens yet.</div>
+                </div>
+                <button onclick="exportTokenHistory()" style="
+                    margin-top: 10px;
+                    background: rgba(255, 204, 0, 0.2);
+                    border: 2px solid #ffcc00;
+                    color: #ffcc00;
+                    padding: 8px 16px;
+                    font-size: 14px;
+                    font-family: sans-serif;
+                    border-radius: 5px;
+                    cursor: pointer;
+                    transition: all 0.3s;
+                ">Export Token History</button>
+            </div>
+            
+            <div class="closeStats">Press P to resume or SPACE to start new game</div>
+        </div>
     </div>
     <div id="touchControls">
         <div class="touchZone left" data-action="left"></div>
