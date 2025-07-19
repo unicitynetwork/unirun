@@ -6477,6 +6477,16 @@ function startDroneAI() {
                 physics.body.velocity[1] = altitudeDiff * 2; // Fine adjustment
             }
             
+            // Make drone face the player during pursuit
+            const meshData = noa.entities.getMeshData(droneEntity);
+            if (meshData && meshData.mesh) {
+                // Calculate angle to face player (yaw)
+                const angleToPlayer = Math.atan2(dx, dz);
+                meshData.mesh.rotation.y = angleToPlayer;
+                
+                // Slight downward pitch during pursuit
+                meshData.mesh.rotation.x = 0.1;
+            }
             
         } else {
             // COMBAT MODE - hover around player at lower altitude and shoot
@@ -6504,6 +6514,19 @@ function startDroneAI() {
             physics.body.velocity[0] = hoverDx * 2.0; // 2x faster hovering
             physics.body.velocity[1] = hoverDy * 3.0; // 2x faster altitude adjustment
             physics.body.velocity[2] = hoverDz * 2.0;
+            
+            // Make drone face the player while circling
+            const meshData = noa.entities.getMeshData(droneEntity);
+            if (meshData && meshData.mesh) {
+                // Calculate angle to face player (yaw)
+                const angleToPlayer = Math.atan2(dx, dz);
+                meshData.mesh.rotation.y = angleToPlayer;
+                
+                // Calculate pitch to look at player
+                const horizontalDist = Math.sqrt(dx * dx + dz * dz);
+                const pitch = Math.atan2(-dy, horizontalDist);
+                meshData.mesh.rotation.x = pitch * 0.5; // Reduced pitch for better look
+            }
             
             // Fire projectile if cooldown passed
             const currentTime = Date.now();
