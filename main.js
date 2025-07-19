@@ -3315,42 +3315,65 @@ function setupNoaEngine() {
     
     // Create light spheres on top of robot
     const lights = [];
+    // Robot is 1.8 tall, centered at 0.9, so top is at 0.9 + 0.9 = 1.8
+    // Place lights slightly above the top
     const lightPositions = [
-        [-0.2, 0.9, -0.2],  // Front-left
-        [0.2, 0.9, -0.2],   // Front-right
-        [-0.2, 0.9, 0.2],   // Back-left
-        [0.2, 0.9, 0.2]     // Back-right
+        [-0.15, 1.0, -0.15],  // Front-left (above head)
+        [0.15, 1.0, -0.15],   // Front-right (above head)
+        [-0.15, 1.0, 0.15],   // Back-left (above head)
+        [0.15, 1.0, 0.15]     // Back-right (above head)
     ];
     
     lightPositions.forEach((pos, index) => {
-        // Create small sphere for light
+        // Create larger sphere for light
         const lightSphere = BABYLON.MeshBuilder.CreateSphere(`robotLight${index}`, {
-            diameter: 0.1,
-            segments: 8
+            diameter: 0.25,  // Even larger
+            segments: 16
         }, scene);
         
         // Parent to robot box
         lightSphere.parent = box;
         lightSphere.position.set(pos[0], pos[1], pos[2]);
         
-        // Create emissive material
+        // Create highly emissive material
         const lightMat = noa.rendering.makeStandardMaterial(`robotLightMat${index}`);
-        lightMat.emissiveColor = lightColors[0]; // Start with white
-        lightMat.diffuseColor = new BABYLON.Color3(0, 0, 0);
-        lightMat.specularColor = new BABYLON.Color3(0, 0, 0);
+        lightMat.emissiveColor = lightColors[0].scale(2); // Much brighter
+        lightMat.diffuseColor = lightColors[0];
+        lightMat.specularColor = new BABYLON.Color3(1, 1, 1);
+        lightMat.alpha = 0.8;
         lightSphere.material = lightMat;
         
-        lights.push({ sphere: lightSphere, material: lightMat });
+        // Add a glow sphere around each light
+        const glowSphere = BABYLON.MeshBuilder.CreateSphere(`robotGlow${index}`, {
+            diameter: 0.5,  // Larger glow area
+            segments: 8
+        }, scene);
+        glowSphere.parent = box;
+        glowSphere.position.set(pos[0], pos[1], pos[2]);
+        glowSphere.renderingGroupId = 1;  // Render on top
+        
+        const glowMat = noa.rendering.makeStandardMaterial(`robotGlowMat${index}`);
+        glowMat.emissiveColor = lightColors[0];
+        glowMat.diffuseColor = new BABYLON.Color3(0, 0, 0);
+        glowMat.alpha = 0.3;
+        glowMat.backFaceCulling = false;
+        glowSphere.material = glowMat;
+        
+        lights.push({ 
+            sphere: lightSphere, 
+            material: lightMat,
+            glow: glowSphere,
+            glowMat: glowMat
+        });
     });
     
     // Animate the lights
     let lightTime = 0;
     scene.registerBeforeRender(() => {
-        lightTime += 0.05;
+        lightTime += 0.08;  // Faster animation
         
         // Calculate which color to show (cycle through colors)
-        const colorIndex = Math.floor(lightTime) % lightColors.length;
-        const currentColor = lightColors[colorIndex];
+        const colorIndex = Math.floor(lightTime * 2) % lightColors.length;
         
         // Update all lights with flashing effect
         lights.forEach((light, index) => {
@@ -3358,12 +3381,20 @@ function setupNoaEngine() {
             const offsetColorIndex = (colorIndex + index) % lightColors.length;
             const lightColor = lightColors[offsetColorIndex];
             
-            // Pulse effect
-            const pulse = 0.5 + 0.5 * Math.sin(lightTime * 4 + index);
-            light.material.emissiveColor = lightColor.scale(pulse);
+            // Strong pulse effect
+            const pulse = 0.3 + 0.7 * Math.sin(lightTime * 6 + index * Math.PI / 2);
             
-            // Make the sphere glow
-            light.sphere.visibility = 0.8 + 0.2 * pulse;
+            // Update main light
+            light.material.emissiveColor = lightColor.scale(2 + pulse);
+            light.material.diffuseColor = lightColor.scale(0.5);
+            
+            // Update glow
+            light.glowMat.emissiveColor = lightColor.scale(pulse);
+            light.glowMat.alpha = 0.2 + 0.3 * pulse;
+            
+            // Scale the light sphere for extra effect
+            const scale = 1 + 0.2 * pulse;
+            light.sphere.scaling.set(scale, scale, scale);
         });
     });
     
@@ -6307,11 +6338,63 @@ function createDrone(spawnNearPlayer = true) {
         depth: 0.8
     }, scene);
     
-    // Create dark gray material for drone
-    const droneMat = noa.rendering.makeStandardMaterial('droneMat');
-    droneMat.diffuseColor = new BABYLON.Color3(0.3, 0.3, 0.3); // Dark gray
-    droneMat.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
-    droneBox.material = droneMat;
+    // Create multi-material for different textures per face
+    const droneMultiMat = new BABYLON.MultiMaterial('droneMultiMat', scene);
+    
+    // Face order in Babylon.js: front, back, right, left, top, bottom
+    const droneFaceConfigs = [
+        { name: 'front', texture: '/assets/unirun_drone_face.png' },
+        { name: 'back', texture: '/assets/unirun_drone_back.png' },
+        { name: 'right', texture: '/assets/unirun_drone_side.png' },
+        { name: 'left', texture: '/assets/unirun_drone_side.png' },
+        { name: 'top', texture: '/assets/unirun_drone_top.png' },
+        { name: 'bottom', texture: '/assets/unirun_drone_button.png' }
+    ];
+    
+    // Create materials for each face
+    droneFaceConfigs.forEach((config, index) => {
+        const mat = noa.rendering.makeStandardMaterial(`drone_${config.name}`);
+        
+        try {
+            const texture = new BABYLON.Texture(config.texture, scene, false, true, BABYLON.Texture.NEAREST_SAMPLINGMODE);
+            texture.hasAlpha = true;
+            
+            // Flip texture horizontally for left side to mirror the right side
+            if (config.name === 'left') {
+                texture.uScale = -1;
+            }
+            
+            mat.diffuseTexture = texture;
+            mat.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
+            mat.emissiveColor = new BABYLON.Color3(0.1, 0.1, 0.1); // Slight emission
+            
+        } catch (e) {
+            // Fallback to dark gray if texture fails
+            console.warn(`Failed to load drone texture ${config.texture}, using gray fallback`);
+            mat.diffuseColor = new BABYLON.Color3(0.3, 0.3, 0.3);
+            mat.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
+        }
+        
+        droneMultiMat.subMaterials[index] = mat;
+    });
+    
+    // Apply multi-material and create submeshes
+    droneBox.material = droneMultiMat;
+    droneBox.subMeshes = [];
+    
+    // Create submeshes for each face
+    const verticesPerFace = 4;
+    const indicesPerFace = 6;
+    for (let i = 0; i < 6; i++) {
+        droneBox.subMeshes.push(new BABYLON.SubMesh(
+            i,                          // materialIndex
+            i * verticesPerFace,        // verticesStart
+            verticesPerFace,            // verticesCount
+            i * indicesPerFace,         // indexStart
+            indicesPerFace,             // indexCount
+            droneBox                    // mesh
+        ));
+    }
     
     // Create drone entity
     // The last parameter (true) already adds physics component
