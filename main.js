@@ -686,6 +686,19 @@ async function initializeGame() {
         }
     });
     
+    // Handle "View Full Statistics" button on death screen
+    const viewStatsBtn = document.getElementById('viewStatsBtn');
+    if (viewStatsBtn) {
+        viewStatsBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const deathScreen = document.getElementById('deathScreen');
+            if (deathScreen) {
+                deathScreen.classList.remove('show');
+            }
+            showStatsScreen();
+        });
+    }
+    
     // Check for gamedev version change and clear chunk tokens if needed
     checkGamedevVersionAndClearChunks();
     
