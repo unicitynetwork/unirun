@@ -4733,16 +4733,19 @@ function setupNoaEngine() {
                     
                     // Check for north corridor at y=3
                     if (level[i][k] === 'corridor_north') {
-                        // North corridor is at x=14-16, place pillars at x=13 and x=17
-                        if (i === 14) {
-                            // Place pillar to the west (x-1)
-                            for (let h = 4; h <= 11; h++) { // Pillars from y=4 to y=11 for raised corridor
-                                data.set(i - 1, h, k, pillarBlockID);
-                            }
-                        } else if (i === 16) {
-                            // Place pillar to the east (x+1)
-                            for (let h = 4; h <= 11; h++) { // Pillars from y=4 to y=11 for raised corridor
-                                data.set(i + 1, h, k, pillarBlockID);
+                        // Verify there's actually a north corridor floor at y=3
+                        if (data.get(i, 3, k) === corridorNorthID || data.get(i, 3, k) === slowingFloorID) {
+                            // North corridor is at x=14-16, place pillars at x=13 and x=17
+                            if (i === 14) {
+                                // Place pillar to the west (x-1)
+                                for (let h = 4; h <= 11; h++) { // Pillars from y=4 to y=11 for raised corridor
+                                    data.set(i - 1, h, k, pillarBlockID);
+                                }
+                            } else if (i === 16) {
+                                // Place pillar to the east (x+1)
+                                for (let h = 4; h <= 11; h++) { // Pillars from y=4 to y=11 for raised corridor
+                                    data.set(i + 1, h, k, pillarBlockID);
+                                }
                             }
                         }
                     }
