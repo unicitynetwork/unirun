@@ -564,6 +564,39 @@
             </div>
             
             <div class="statsSection">
+                <div class="statsSectionTitle">Coin Vault</div>
+                <div class="totalStats" style="background: rgba(255, 215, 0, 0.1); border-color: #ffd700;">
+                    <div class="runStat">
+                        <span class="label">Vault Balance:</span>
+                        <span class="value" id="vaultBalance" style="color: #ffd700; font-size: 24px;">0 URC</span>
+                    </div>
+                    <div class="runStat">
+                        <span class="label">Total Deposits:</span>
+                        <span class="value" id="vaultDeposits">0</span>
+                    </div>
+                    <div class="runStat">
+                        <span class="label">Last Checkpoint:</span>
+                        <span class="value" id="lastCheckpoint">0 blocks</span>
+                    </div>
+                </div>
+                <div class="runHistory" id="vaultHistory" style="max-height: 200px;">
+                    <div class="noRunsMessage">No vault deposits yet. Reach 1000 blocks to make your first deposit!</div>
+                </div>
+                <button onclick="exportVault()" style="
+                    margin-top: 10px;
+                    background: rgba(255, 215, 0, 0.2);
+                    border: 2px solid #ffd700;
+                    color: #ffd700;
+                    padding: 8px 16px;
+                    font-size: 14px;
+                    font-family: sans-serif;
+                    border-radius: 5px;
+                    cursor: pointer;
+                    transition: all 0.3s;
+                ">Export Vault Data</button>
+            </div>
+            
+            <div class="statsSection">
                 <div class="statsSectionTitle">Token History</div>
                 <div class="runHistory" id="tokenHistory">
                     <div class="noRunsMessage">No previous tokens yet.</div>

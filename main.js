@@ -98,6 +98,8 @@ let corridorNorthID;
 let corridorWestID;
 let slowingFloorID;
 let stripeBlockID;
+let checkpointFlagWhiteID;
+let checkpointFlagBlackID;
 let pillarBlockID;
 
 // Mesh references (will be set during engine setup)
@@ -146,6 +148,141 @@ let tokenStatus = {
     lastError: null
 };
 
+// Vault system for permanent coin storage
+let playerVault = {
+    totalCoins: 0,
+    deposits: [], // Array of {amount, z, distance, timestamp}
+    lastCheckpointDistance: 0,
+    lastCheckpointZ: 0
+};
+
+// Load vault from localStorage
+function loadVault() {
+    const savedVault = localStorage.getItem('unicityRunner_vault');
+    if (savedVault) {
+        try {
+            playerVault = JSON.parse(savedVault);
+            // Handle old format - add lastCheckpointZ if missing
+            if (playerVault.lastCheckpointZ === undefined) {
+                playerVault.lastCheckpointZ = 0;
+            }
+            console.log(`Loaded vault with ${playerVault.totalCoins} total coins`);
+        } catch (e) {
+            console.error('Error loading vault:', e);
+            playerVault = {
+                totalCoins: 0,
+                deposits: [],
+                lastCheckpointDistance: 0,
+                lastCheckpointZ: 0
+            };
+        }
+    }
+}
+
+// Save vault to localStorage
+function saveVault() {
+    localStorage.setItem('unicityRunner_vault', JSON.stringify(playerVault));
+}
+
+// Check if we've reached a checkpoint
+function checkForVaultCheckpoint(currentZ) {
+    const CHECKPOINT_INTERVAL = 1000; // Every 1000 blocks
+    
+    // Find the next checkpoint based on absolute Z position
+    const nextCheckpointZ = Math.floor(currentZ / CHECKPOINT_INTERVAL) * CHECKPOINT_INTERVAL;
+    
+    // Check if we've passed a new checkpoint (comparing absolute Z values)
+    if (nextCheckpointZ > playerVault.lastCheckpointZ && currentZ >= nextCheckpointZ && nextCheckpointZ > 0) {
+        // We've passed a checkpoint!
+        const totalCoins = confirmedURCBalance + pendingURCBalance;
+        
+        console.log(`CHECKPOINT REACHED at Z=${nextCheckpointZ}! Depositing ${totalCoins} coins to vault.`);
+        
+        // Add to vault
+        if (totalCoins > 0) {
+            playerVault.totalCoins += totalCoins;
+            playerVault.deposits.push({
+                amount: totalCoins,
+                z: nextCheckpointZ,
+                distance: totalDistanceTraveled,
+                timestamp: Date.now(),
+                confirmed: confirmedURCBalance,
+                pending: pendingURCBalance
+            });
+        }
+        
+        playerVault.lastCheckpointZ = nextCheckpointZ;
+        playerVault.lastCheckpointDistance = totalDistanceTraveled;
+        
+        // Save vault
+        saveVault();
+        
+        if (totalCoins > 0) {
+            // Clear player's coins (they're now safe in the vault)
+            confirmedURCBalance = 0;
+            pendingURCBalance = 0;
+            playerCoins = 0;
+            
+            // Clear inventory since coins are vaulted
+            localStorage.removeItem('unicityRunner_urcInventory');
+            localStorage.removeItem('unicityRunner_pendingURCMints');
+            
+            // Update display
+            updateCoinDisplay();
+        }
+        
+        // Show checkpoint notification
+        showCheckpointNotification(totalCoins, nextCheckpointZ);
+    }
+}
+
+// Show checkpoint notification
+function showCheckpointNotification(coins, checkpointZ) {
+    // Create notification element
+    const notification = document.createElement('div');
+    notification.style.cssText = `
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(0, 255, 136, 0.9);
+        color: #000;
+        padding: 20px 40px;
+        font-size: 28px;
+        font-weight: bold;
+        font-family: sans-serif;
+        border-radius: 10px;
+        z-index: 1000;
+        text-align: center;
+        box-shadow: 0 0 30px rgba(0, 255, 136, 0.8);
+        animation: checkpointPulse 2s ease-out;
+    `;
+    notification.innerHTML = `
+        <div>CHECKPOINT Z=${checkpointZ}!</div>
+        <div style="font-size: 20px; margin-top: 10px;">${coins > 0 ? `${coins} URC deposited to vault` : 'No coins to deposit'}</div>
+        <div style="font-size: 16px; margin-top: 5px;">Total vault: ${playerVault.totalCoins} URC</div>
+    `;
+    
+    // Add animation keyframes
+    const style = document.createElement('style');
+    style.textContent = `
+        @keyframes checkpointPulse {
+            0% { transform: translate(-50%, -50%) scale(0.8); opacity: 0; }
+            20% { transform: translate(-50%, -50%) scale(1.1); opacity: 1; }
+            100% { transform: translate(-50%, -50%) scale(1); opacity: 0; }
+        }
+    `;
+    document.head.appendChild(style);
+    
+    document.body.appendChild(notification);
+    
+    // Remove after animation
+    setTimeout(() => {
+        notification.remove();
+        style.remove();
+    }, 2000);
+}
+
 // No custom meshes needed - noa only supports full block collision
 
 // Update coin display
@@ -162,10 +299,27 @@ function updateCoinDisplay() {
     
     const coinDisplay = document.getElementById('coinDisplay');
     if (coinDisplay) {
-        coinDisplay.innerHTML = `
+        let html = `
             <div style="color: #33ff88;">Confirmed: ${confirmedURCBalance} URC</div>
             <div style="color: #ffcc00;">Pending: ${pendingURCBalance} URC</div>
         `;
+        
+        // Show vault info if there are vaulted coins
+        if (playerVault.totalCoins > 0) {
+            html += `<div style="color: #ffd700; margin-top: 5px; font-size: 14px;">Vault: ${playerVault.totalCoins} URC</div>`;
+        }
+        
+        // Show next checkpoint based on current Z position
+        if (noa && noa.playerEntity) {
+            const currentZ = noa.entities.getPosition(noa.playerEntity)[2];
+            const nextCheckpointZ = Math.ceil(currentZ / 1000) * 1000;
+            if (nextCheckpointZ > playerVault.lastCheckpointZ && nextCheckpointZ > 0) {
+                const blocksToCheckpoint = nextCheckpointZ - currentZ;
+                html += `<div style="color: #888; margin-top: 5px; font-size: 12px;">Next checkpoint: Z=${nextCheckpointZ} (${Math.floor(blocksToCheckpoint)} blocks)</div>`;
+            }
+        }
+        
+        coinDisplay.innerHTML = html;
     }
 }
 
@@ -512,6 +666,57 @@ function updateStatsDisplay() {
     const totalTokens = document.getElementById('totalTokens');
     totalTokens.textContent = playerStats.tokenHistory.length + 1; // +1 for current token
     
+    // Update vault display
+    const vaultBalance = document.getElementById('vaultBalance');
+    const vaultDeposits = document.getElementById('vaultDeposits');
+    const lastCheckpoint = document.getElementById('lastCheckpoint');
+    const vaultHistory = document.getElementById('vaultHistory');
+    
+    if (vaultBalance) {
+        vaultBalance.textContent = `${playerVault.totalCoins} URC`;
+    }
+    if (vaultDeposits) {
+        vaultDeposits.textContent = playerVault.deposits.length;
+    }
+    if (lastCheckpoint) {
+        lastCheckpoint.textContent = `${playerVault.lastCheckpointDistance} blocks`;
+    }
+    
+    // Show vault deposit history
+    if (vaultHistory) {
+        if (playerVault.deposits.length === 0) {
+            vaultHistory.innerHTML = '<div class="noRunsMessage">No vault deposits yet. Reach 1000 blocks to make your first deposit!</div>';
+        } else {
+            vaultHistory.innerHTML = playerVault.deposits
+                .slice(-10) // Show last 10 deposits
+                .reverse() // Most recent first
+                .map((deposit, index) => {
+                    const date = new Date(deposit.timestamp);
+                    return `
+                        <div class="runEntry" style="background: rgba(255, 215, 0, 0.05);">
+                            <div class="runNumber" style="color: #ffd700;">Checkpoint Z=${deposit.z || deposit.distance}</div>
+                            <div class="runStat">
+                                <span class="label">Deposited:</span>
+                                <span class="value" style="color: #ffd700;">${deposit.amount} URC</span>
+                            </div>
+                            <div class="runStat">
+                                <span class="label">Confirmed:</span>
+                                <span class="value">${deposit.confirmed || 0} URC</span>
+                            </div>
+                            <div class="runStat">
+                                <span class="label">Pending:</span>
+                                <span class="value">${deposit.pending || 0} URC</span>
+                            </div>
+                            <div class="runStat">
+                                <span class="label">Date:</span>
+                                <span class="value">${date.toLocaleString()}</span>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+        }
+    }
+    
     // Update token history
     const tokenHistoryDiv = document.getElementById('tokenHistory');
     if (playerStats.tokenHistory.length === 0) {
@@ -645,6 +850,38 @@ window.exportTokenHistory = function() {
     URL.revokeObjectURL(url);
 }
 
+// Export vault data
+window.exportVault = function() {
+    const exportData = {
+        playerName: playerStats.playerName,
+        exportDate: new Date().toISOString(),
+        gameVersion: GAMEDEV_VERSION,
+        vault: {
+            totalCoins: playerVault.totalCoins,
+            totalDeposits: playerVault.deposits.length,
+            lastCheckpoint: playerVault.lastCheckpointDistance,
+            deposits: playerVault.deposits
+        },
+        summary: {
+            totalRunsCompleted: playerStats.runHistory.length,
+            totalCoinsCollectedAllTime: playerStats.runHistory.reduce((sum, run) => sum + run.coins, 0),
+            vaultedCoins: playerVault.totalCoins,
+            percentageVaulted: playerStats.runHistory.length > 0 ? 
+                Math.round((playerVault.totalCoins / playerStats.runHistory.reduce((sum, run) => sum + run.coins, 0)) * 100) : 0
+        }
+    };
+    
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `unicityrunner_vault_${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
 async function initializeGame() {
     // Load processed transactions from localStorage
     const savedProcessed = localStorage.getItem('unicityRunner_processedTransactions');
@@ -748,6 +985,9 @@ async function initializeGame() {
     
     // Initialize URC inventory
     await initializeURCInventory();
+    
+    // Load vault
+    loadVault();
     
     // Now that player token (and private key) is initialized, restore chunk tokenization queue
     if (savedQueue) {
@@ -3604,6 +3844,38 @@ function setupNoaEngine() {
         opaque: false // Not fully opaque due to transparency
     });
     
+    // Create checkpoint flag materials
+    var checkpointWhiteMat = noa.rendering.makeStandardMaterial('checkpointWhite');
+    checkpointWhiteMat.diffuseColor = new BABYLON.Color3(1, 1, 1); // White
+    checkpointWhiteMat.emissiveColor = new BABYLON.Color3(0.2, 0.2, 0.2); // Slight glow
+    checkpointWhiteMat.specularColor = new BABYLON.Color3(0, 0, 0);
+    
+    var checkpointBlackMat = noa.rendering.makeStandardMaterial('checkpointBlack');
+    checkpointBlackMat.diffuseColor = new BABYLON.Color3(0.1, 0.1, 0.1); // Dark gray (not pure black)
+    checkpointBlackMat.emissiveColor = new BABYLON.Color3(0, 0, 0);
+    checkpointBlackMat.specularColor = new BABYLON.Color3(0, 0, 0);
+    
+    noa.registry.registerMaterial('checkpointWhite', {
+        renderMaterial: checkpointWhiteMat
+    });
+    
+    noa.registry.registerMaterial('checkpointBlack', {
+        renderMaterial: checkpointBlackMat
+    });
+    
+    // Checkpoint flag blocks
+    checkpointFlagWhiteID = noa.registry.registerBlock(11, {
+        material: 'checkpointWhite',
+        solid: true,
+        opaque: true
+    });
+    
+    checkpointFlagBlackID = noa.registry.registerBlock(12, {
+        material: 'checkpointBlack',
+        solid: true,
+        opaque: true
+    });
+    
     
     // Function to find a valid spawn position in a room
     function findSpawnRoom(seed) {
@@ -4158,6 +4430,55 @@ function setupNoaEngine() {
                     }
                     
                     data.set(i, j, k, voxelID);
+                }
+            }
+        }
+        
+        // Add checkpoint flags at Z=1000, 2000, 3000, etc.
+        const CHECKPOINT_INTERVAL = 1000;
+        for (let i = 0; i < chunkSize; i++) {
+            for (let k = 0; k < chunkSize; k++) {
+                const worldZ = z + k;
+                
+                // Check if this Z coordinate is a checkpoint
+                if (worldZ > 0 && worldZ % CHECKPOINT_INTERVAL === 0) {
+                    // Place flags on the sides of corridors
+                    
+                    // Check for north corridor at this position (y=3)
+                    if (data.get(i, 3, k) === corridorNorthID || data.get(i, 3, k) === slowingFloorID) {
+                        // North corridor runs from x=14 to x=16
+                        // Place flags on the walls at x=13 and x=17
+                        if (i === 13 || i === 17) {
+                            // Create 3-block high checkered flag
+                            for (let flagY = 4; flagY <= 6; flagY++) {
+                                // Create checkered pattern
+                                const isWhite = ((flagY - 4) % 2) === 0;
+                                data.set(i, flagY, k, isWhite ? checkpointFlagWhiteID : checkpointFlagBlackID);
+                            }
+                        }
+                    }
+                    
+                    // Check for east/west corridors at ground level (y=0)
+                    if (data.get(i, 0, k) === corridorEastID || data.get(i, 0, k) === corridorWestID) {
+                        // Find corridor edges for flag placement
+                        let isCorridorEdge = false;
+                        
+                        // Check if this is the edge of a corridor
+                        if (i > 0 && data.get(i-1, 0, k) === 0 && data.get(i, 1, k) === dirtID) {
+                            isCorridorEdge = true; // Western edge
+                        } else if (i < chunkSize - 1 && data.get(i+1, 0, k) === 0 && data.get(i, 1, k) === dirtID) {
+                            isCorridorEdge = true; // Eastern edge
+                        }
+                        
+                        if (isCorridorEdge) {
+                            // Create 3-block high checkered flag
+                            for (let flagY = 1; flagY <= 3; flagY++) {
+                                // Create checkered pattern (offset for ground-level corridors)
+                                const isWhite = ((flagY - 1) % 2) === 0;
+                                data.set(i, flagY, k, isWhite ? checkpointFlagWhiteID : checkpointFlagBlackID);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -5159,6 +5480,9 @@ function setupNoaEngine() {
         
         const currentPos = noa.entities.getPosition(noa.playerEntity);
         totalDistanceTraveled = Math.abs(currentPos[2] - playerStartZ);
+        
+        // Check for vault checkpoint using absolute Z position
+        checkForVaultCheckpoint(currentPos[2]);
         
         // Update distance display
         const distanceValue = document.querySelector('#distanceDisplay .distance-value');
@@ -7823,6 +8147,11 @@ async function respawnPlayer() {
     // Reset distance tracking
     playerStartZ = spawnPos[2];
     totalDistanceTraveled = 0;
+    
+    // Reset vault checkpoint tracking for new run
+    playerVault.lastCheckpointDistance = 0;
+    playerVault.lastCheckpointZ = 0;
+    saveVault();
     
     // Start new run tracking
     playerStats.currentRunStartTime = Date.now();
