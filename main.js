@@ -218,6 +218,36 @@ function checkForVaultCheckpoint(currentZ) {
         saveVault();
         
         if (totalCoins > 0) {
+            // Save current URC tokens to vaulted tokens before clearing
+            const inventoryData = localStorage.getItem('unicityRunner_urcInventory');
+            if (inventoryData) {
+                try {
+                    const inventory = JSON.parse(inventoryData);
+                    if (inventory.tokens && inventory.tokens.length > 0) {
+                        // Load existing vaulted tokens
+                        let vaultedTokens = [];
+                        const vaultedData = localStorage.getItem('unicityRunner_vaultedTokens');
+                        if (vaultedData) {
+                            vaultedTokens = JSON.parse(vaultedData);
+                        }
+                        
+                        // Add current tokens to vaulted collection
+                        inventory.tokens.forEach(tokenData => {
+                            vaultedTokens.push({
+                                ...tokenData,
+                                vaultedAt: Date.now(),
+                                checkpointZ: nextCheckpointZ
+                            });
+                        });
+                        
+                        // Save vaulted tokens
+                        localStorage.setItem('unicityRunner_vaultedTokens', JSON.stringify(vaultedTokens));
+                    }
+                } catch (e) {
+                    console.error('Error saving vaulted tokens:', e);
+                }
+            }
+            
             // Clear player's coins (they're now safe in the vault)
             confirmedURCBalance = 0;
             pendingURCBalance = 0;
@@ -852,6 +882,51 @@ window.exportTokenHistory = function() {
 
 // Export vault data
 window.exportVault = function() {
+    // Load current URC inventory
+    let urcInventory = { tokens: [], confirmedBalance: 0 };
+    const inventoryData = localStorage.getItem('unicityRunner_urcInventory');
+    if (inventoryData) {
+        urcInventory = JSON.parse(inventoryData);
+    }
+    
+    // Load all minted URC tokens from localStorage history
+    const allMintedTokens = [];
+    
+    // Get tokens from current inventory
+    if (urcInventory.tokens) {
+        urcInventory.tokens.forEach(tokenData => {
+            allMintedTokens.push({
+                tokenId: tokenData.tokenId,
+                amount: tokenData.amount,
+                mintedAt: tokenData.mintedAt,
+                status: 'active',
+                token: tokenData.token
+            });
+        });
+    }
+    
+    // Also check for any vaulted tokens that might have been saved separately
+    // (in case coins were vaulted and removed from active inventory)
+    const vaultedTokensKey = 'unicityRunner_vaultedTokens';
+    const vaultedTokensData = localStorage.getItem(vaultedTokensKey);
+    if (vaultedTokensData) {
+        try {
+            const vaultedTokens = JSON.parse(vaultedTokensData);
+            vaultedTokens.forEach(tokenData => {
+                allMintedTokens.push({
+                    tokenId: tokenData.tokenId,
+                    amount: tokenData.amount,
+                    mintedAt: tokenData.mintedAt,
+                    vaultedAt: tokenData.vaultedAt,
+                    status: 'vaulted',
+                    token: tokenData.token
+                });
+            });
+        } catch (e) {
+            console.error('Error loading vaulted tokens:', e);
+        }
+    }
+    
     const exportData = {
         playerName: playerStats.playerName,
         exportDate: new Date().toISOString(),
@@ -859,8 +934,15 @@ window.exportVault = function() {
         vault: {
             totalCoins: playerVault.totalCoins,
             totalDeposits: playerVault.deposits.length,
-            lastCheckpoint: playerVault.lastCheckpointDistance,
+            lastCheckpointZ: playerVault.lastCheckpointZ,
+            lastCheckpointDistance: playerVault.lastCheckpointDistance,
             deposits: playerVault.deposits
+        },
+        urcTokens: {
+            totalMintedTokens: allMintedTokens.length,
+            totalTokenValue: allMintedTokens.reduce((sum, t) => sum + t.amount, 0),
+            activeBalance: urcInventory.confirmedBalance || 0,
+            tokens: allMintedTokens
         },
         summary: {
             totalRunsCompleted: playerStats.runHistory.length,
