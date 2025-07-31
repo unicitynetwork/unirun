@@ -988,6 +988,13 @@ async function initializeGame() {
     // Handle stats screen key events
     document.addEventListener('keydown', (e) => {
         const statsScreen = document.getElementById('statsScreen');
+        const playerNameInput = document.getElementById('playerNameInput');
+        
+        // Don't intercept keys if player is typing in the name input
+        if (document.activeElement === playerNameInput) {
+            return;
+        }
+        
         if (statsScreen.classList.contains('show')) {
             if (e.code === 'KeyP') {
                 e.preventDefault();
@@ -7930,6 +7937,12 @@ function handlePlayerDeath(reason = 'Unknown') {
     
     // Listen for space key to respawn
     const respawnHandler = (e) => {
+        // Don't intercept keys if player is typing in the name input
+        const playerNameInput = document.getElementById('playerNameInput');
+        if (document.activeElement === playerNameInput) {
+            return;
+        }
+        
         if (e.code === 'Space' && isPlayerDead && !isCreatingNewToken) {
             e.preventDefault();
             document.removeEventListener('keydown', respawnHandler);
@@ -7964,6 +7977,12 @@ function setupPauseControls() {
     
     // Listen for P key to toggle pause
     document.addEventListener('keydown', (e) => {
+        // Don't intercept keys if player is typing in the name input
+        const playerNameInput = document.getElementById('playerNameInput');
+        if (document.activeElement === playerNameInput) {
+            return;
+        }
+        
         if (e.code === 'KeyP' && !isPlayerDead) {
             e.preventDefault();
             isPaused = !isPaused;
